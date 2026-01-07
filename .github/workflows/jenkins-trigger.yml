@@ -1,17 +1,24 @@
-# Jenkins Build Trigger - Reusable Workflow
-# Triggers Jenkins Docker build jobs after quality checks pass
-# NOTE: For sandbox testing, this is a placeholder that logs but doesn't trigger real Jenkins
+# Jenkins Trigger - Reusable Workflow
+# Triggers Jenkins jobs for unit tests and/or Docker builds
+#
+# Usage:
+#   - On PR: trigger with deploy=false (unit tests only)
+#   - On push to main: trigger with deploy=true (unit tests + Docker build)
 
-name: Trigger Jenkins Build
+name: Trigger Jenkins
 
 on:
   workflow_call:
     inputs:
-      job-name:
-        description: 'Jenkins job name to trigger'
+      deploy:
+        description: 'Run Docker build and push (true for push to main, false for PRs)'
+        required: true
+        type: boolean
+      odoo-version:
+        description: 'Odoo version for the build'
         required: false
         type: string
-        default: 'odoo-docker-build'
+        default: '17'
       branch:
         description: 'Branch name'
         required: false
@@ -34,11 +41,18 @@ on:
         required: false
       JENKINS_TOKEN:
         required: false
+    outputs:
+      triggered:
+        description: 'Whether Jenkins was triggered'
+        value: ${{ jobs.trigger.outputs.triggered }}
 
 jobs:
   trigger:
-    name: Trigger Jenkins
+    name: "Jenkins: ${{ inputs.deploy && 'Tests + Deploy' || 'Tests Only' }}"
     runs-on: ubuntu-latest
+    outputs:
+      triggered: ${{ steps.trigger.outputs.triggered }}
+
     steps:
       - name: Validate Jenkins configuration
         id: validate
@@ -56,50 +70,76 @@ jobs:
       - name: Log Jenkins trigger (dry-run)
         if: steps.validate.outputs.dry-run == 'true'
         run: |
+          MODE="${{ inputs.deploy && 'Unit Tests + Docker Build' || 'Unit Tests Only' }}"
+
           echo "## Jenkins Trigger (Dry Run)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Would trigger:**" >> $GITHUB_STEP_SUMMARY
-          echo "- Job: \`${{ inputs.job-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Mode:** $MODE" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Would trigger with:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Repository: \`${{ github.repository }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Branch: \`${{ inputs.branch }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Commit: \`${{ inputs.commit }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Repository: \`${{ github.repository }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Odoo Version: \`${{ inputs.odoo-version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Deploy: \`${{ inputs.deploy }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo ":information_source: This is a dry-run. No Jenkins job was triggered." >> $GITHUB_STEP_SUMMARY
+          echo ":information_source: Dry-run mode - Jenkins was not triggered." >> $GITHUB_STEP_SUMMARY
 
-          echo "::notice::Dry-run: Would trigger Jenkins job '${{ inputs.job-name }}' for ${{ github.repository }}@${{ inputs.branch }}"
+          echo "::notice::Dry-run: Would trigger Jenkins ($MODE) for ${{ github.repository }}@${{ inputs.branch }}"
 
-      - name: Trigger Jenkins Job
+      - name: Trigger Jenkins
+        id: trigger
         if: steps.validate.outputs.dry-run == 'false'
         run: |
-          echo "Triggering Jenkins job: ${{ inputs.job-name }}"
+          MODE="${{ inputs.deploy && 'Unit Tests + Docker Build' || 'Unit Tests Only' }}"
+          echo "Triggering Jenkins: $MODE"
+          echo "  Repository: ${{ github.repository }}"
           echo "  Branch: ${{ inputs.branch }}"
           echo "  Commit: ${{ inputs.commit }}"
-          echo "  Repo: ${{ github.repository }}"
+          echo "  Deploy: ${{ inputs.deploy }}"
 
+          # Determine Jenkins job endpoint
+          # Uses generic webhook trigger plugin for flexibility
           RESPONSE=$(curl -s -w "\n%{http_code}" \
-            -X POST "${{ secrets.JENKINS_URL }}/job/${{ inputs.job-name }}/buildWithParameters" \
-            -u "${{ secrets.JENKINS_USER }}:${{ secrets.JENKINS_TOKEN }}" \
-            -d "BRANCH=${{ inputs.branch }}" \
-            -d "COMMIT=${{ inputs.commit }}" \
-            -d "REPO=${{ github.repository }}" \
-            -d "GITHUB_RUN_ID=${{ github.run_id }}" \
-            -d "FROM_GITHUB_ACTIONS=true")
+            -X POST "${{ secrets.JENKINS_URL }}/generic-webhook-trigger/invoke" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Basic $(echo -n '${{ secrets.JENKINS_USER }}:${{ secrets.JENKINS_TOKEN }}' | base64)" \
+            -d '{
+              "repository": "${{ github.repository }}",
+              "branch": "${{ inputs.branch }}",
+              "commit": "${{ inputs.commit }}",
+              "odoo_version": "${{ inputs.odoo-version }}",
+              "deploy": ${{ inputs.deploy }},
+              "run_tests": true,
+              "github_run_id": "${{ github.run_id }}",
+              "github_run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+              "event": "${{ github.event_name }}",
+              "pr_number": "${{ github.event.pull_request.number || '' }}"
+            }')
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
 
-          if [[ "$HTTP_CODE" != "201" && "$HTTP_CODE" != "200" ]]; then
+          if [[ "$HTTP_CODE" != "200" && "$HTTP_CODE" != "201" ]]; then
             echo "::error::Jenkins trigger failed with HTTP $HTTP_CODE"
             echo "$BODY"
             exit 1
           fi
 
-          echo "## Jenkins Build Triggered" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- Job: \`${{ inputs.job-name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Branch: \`${{ inputs.branch }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Commit: \`${{ inputs.commit }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo ":rocket: Jenkins build started successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "triggered=true" >> $GITHUB_OUTPUT
 
-          echo "::notice::Jenkins job '${{ inputs.job-name }}' triggered successfully"
+          echo "## Jenkins Triggered" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Mode:** $MODE" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository | \`${{ github.repository }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ inputs.branch }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ inputs.commit }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Odoo Version | \`${{ inputs.odoo-version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy | \`${{ inputs.deploy }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo ":rocket: Jenkins job started!" >> $GITHUB_STEP_SUMMARY
+
+          echo "::notice::Jenkins triggered ($MODE) for ${{ github.repository }}@${{ inputs.branch }}"

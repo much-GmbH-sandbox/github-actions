@@ -1,0 +1,46 @@
+# CI/CD Pipeline for Odoo Addons
+# - Quality checks run on all pushes and PRs
+# - Unit tests run on all pushes and PRs (via Jenkins)
+# - Docker build + deploy only on push to main (via Jenkins)
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]  # Adjust to your deploy branches
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # ============================================
+  # Stage 1: Quality Checks (GitHub Actions)
+  # ============================================
+  quality:
+    uses: YOUR_ORG/github-actions/.github/workflows/odoo-quality.yml@main
+    with:
+      odoo-version: '17'      # Change to your Odoo version: 14, 15, 16, 17, 18
+      python-version: '3.10'
+      # skip-sonar: true      # Uncomment to skip SonarQube
+      # strict-mode: true     # Uncomment to fail on quality issues
+    secrets: inherit
+
+  # ============================================
+  # Stage 2: Unit Tests + Deploy (Jenkins)
+  # ============================================
+  jenkins:
+    needs: quality  # Only run after quality checks pass
+    uses: YOUR_ORG/github-actions/.github/workflows/jenkins-trigger.yml@main
+    with:
+      odoo-version: '17'      # Should match quality job
+      deploy: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      # dry-run: true         # Uncomment for testing without triggering Jenkins
+    secrets: inherit

@@ -8,6 +8,7 @@
 |-------------|---------|
 | GitHub Plan | Team or higher |
 | Organization Secrets | `CONFIG_TOKEN` - PAT with `repo` scope (for private central repo) |
+| Jenkins Secrets | `JENKINS_URL`, `JENKINS_USER`, `JENKINS_TOKEN` (for CD pipeline) |
 | Optional Secrets | `SONAR_TOKEN`, `SONAR_HOST_URL` (for SonarQube integration) |
 
 ### Creating CONFIG_TOKEN
@@ -32,7 +33,8 @@
 github-actions/
 ├── .github/
 │   └── workflows/
-│       └── odoo-quality.yml      # Reusable workflow
+│       ├── odoo-quality.yml      # Quality checks (CI)
+│       └── jenkins-trigger.yml   # Jenkins trigger (CD)
 ├── configs/
 │   ├── .flake8                   # Flake8 config
 │   ├── .bandit                   # Bandit config
@@ -41,6 +43,7 @@ github-actions/
 │   ├── base.txt                  # Common tools (black, flake8, radon, bandit)
 │   └── odoo{14-18}.txt           # Version-specific pylint-odoo
 ├── templates/
+│   ├── ci.yml                    # Full CI/CD workflow template
 │   └── .pre-commit-config.yaml   # Pre-commit hooks template
 └── docs/
     └── SETUP.md                  # This file
@@ -60,12 +63,14 @@ gh api repos/YOUR_ORG/github-actions/actions/permissions/access \
 
 ### Required File: `.github/workflows/ci.yml`
 
+Copy from `templates/ci.yml` and adjust:
+
 ```yaml
-name: CI
+name: CI/CD
 
 on:
   push:
-    branches: [main]        # Adjust to your branches
+    branches: [main]        # Adjust to your deploy branches
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -76,20 +81,30 @@ concurrency:
 
 permissions:
   contents: read
-  pull-requests: write      # Required for PR comments
+  pull-requests: write
 
 jobs:
+  # Stage 1: Quality Checks (GitHub Actions)
   quality:
     uses: YOUR_ORG/github-actions/.github/workflows/odoo-quality.yml@main
     with:
       odoo-version: '17'    # 14, 15, 16, 17, or 18
       python-version: '3.10'
-      # skip-sonar: true    # Optional: skip SonarQube
-      # strict-mode: true   # Optional: fail on any check failure
+    secrets: inherit
+
+  # Stage 2: Unit Tests + Deploy (Jenkins)
+  jenkins:
+    needs: quality
+    uses: YOUR_ORG/github-actions/.github/workflows/jenkins-trigger.yml@main
+    with:
+      odoo-version: '17'
+      deploy: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     secrets: inherit
 ```
 
 ### Configuration Options
+
+**Quality Workflow:**
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
@@ -98,12 +113,27 @@ jobs:
 | `skip-sonar` | No | false | Skip SonarQube analysis |
 | `strict-mode` | No | false | Fail workflow if any check fails |
 
+**Jenkins Workflow:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `deploy` | Yes | - | `true` for Docker build, `false` for tests only |
+| `odoo-version` | No | 17 | Odoo version for Jenkins |
+| `dry-run` | No | false | Log without triggering Jenkins |
+
 ### What Happens
 
-1. **On Push/PR**: Workflow runs automatically
-2. **Quality Checks**: Black, Flake8, Pylint-Odoo, Radon, Bandit
-3. **PR Comment**: Summary table posted showing pass/fail per tool
-4. **Status Check**: Shows on PR (green even if checks fail, unless `strict-mode: true`)
+```
+PR opened/updated:
+  └─▶ Quality Checks (GHA) ─▶ Unit Tests (Jenkins)
+
+Push to main / PR merged:
+  └─▶ Quality Checks (GHA) ─▶ Unit Tests + Docker Build (Jenkins)
+```
+
+1. **Quality Checks**: Black, Flake8, Pylint-Odoo, Radon, Bandit, SonarQube
+2. **PR Comment**: Summary table posted showing pass/fail per tool
+3. **Jenkins Trigger**: Calls Jenkins for unit tests (always) and deploy (on push to main)
 
 ---
 
@@ -163,6 +193,51 @@ git commit --no-verify -m "emergency fix"
 
 ---
 
+## Jenkins Integration
+
+GitHub Actions triggers Jenkins for unit tests and Docker builds.
+
+### Required Secrets
+
+```bash
+# Set Jenkins secrets at organization level
+gh secret set JENKINS_URL --org YOUR_ORG --visibility all
+# Example: https://jenkins.yourcompany.com
+
+gh secret set JENKINS_USER --org YOUR_ORG --visibility all
+# Jenkins username with API access
+
+gh secret set JENKINS_TOKEN --org YOUR_ORG --visibility all
+# Jenkins API token (not password)
+```
+
+### Jenkins Requirements
+
+1. **Generic Webhook Trigger Plugin** installed
+2. **Pipeline configured** to accept JSON payload with:
+   - `repository`, `branch`, `commit`
+   - `odoo_version`, `deploy`, `run_tests`
+   - `github_run_id`, `github_run_url`
+
+### Payload Example
+
+```json
+{
+  "repository": "your-org/your-repo",
+  "branch": "main",
+  "commit": "abc123...",
+  "odoo_version": "17",
+  "deploy": true,
+  "run_tests": true,
+  "github_run_id": "123456",
+  "github_run_url": "https://github.com/...",
+  "event": "push",
+  "pr_number": ""
+}
+```
+
+---
+
 ## Quick Start Checklist
 
 ### One-Time Setup (Organization)
@@ -170,10 +245,12 @@ git commit --no-verify -m "emergency fix"
 - [ ] Create PAT with `repo` scope
 - [ ] Set `CONFIG_TOKEN` org secret
 - [ ] Set `access_level=organization` on central repo
+- [ ] Set `JENKINS_URL`, `JENKINS_USER`, `JENKINS_TOKEN` secrets
+- [ ] Configure Jenkins Generic Webhook Trigger
 
 ### Per-Repository Setup
 
-- [ ] Create `.github/workflows/ci.yml`
+- [ ] Create `.github/workflows/ci.yml` (copy from templates)
 - [ ] Set correct `odoo-version`
 - [ ] Adjust branch triggers as needed
 - [ ] Copy `.pre-commit-config.yaml` from templates
@@ -189,3 +266,6 @@ git commit --no-verify -m "emergency fix"
 | `HTTP 404` on config download | CONFIG_TOKEN missing/invalid | Check org secret |
 | `Resource not accessible` | Missing PR write permission | Add `pull-requests: write` |
 | Workflow not triggered | access_level not set | Run `gh api` command above |
+| Jenkins dry-run mode | JENKINS_URL not set | Set Jenkins secrets |
+| Jenkins HTTP 401 | Invalid credentials | Check JENKINS_USER and JENKINS_TOKEN |
+| Jenkins HTTP 403 | User lacks permissions | Grant user build permissions in Jenkins |
