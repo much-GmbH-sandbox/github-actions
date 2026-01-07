@@ -44,6 +44,9 @@ jobs:
   quality:
     name: Quality Checks (Odoo ${{ inputs.odoo-version }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     outputs:
       all-passed: ${{ steps.summary.outputs.all-passed }}
 
