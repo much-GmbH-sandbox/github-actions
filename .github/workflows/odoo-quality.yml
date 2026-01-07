@@ -209,7 +209,7 @@ jobs:
         if: ${{ !inputs.skip-sonar }}
         id: sonar
         continue-on-error: true
-        uses: SonarSource/sonarqube-scan-action@v4
+        uses: SonarSource/sonarqube-scan-action@v6
         with:
           args: >
             -Dsonar.projectKey=${{ github.event.repository.name }}
@@ -226,7 +226,7 @@ jobs:
 
       - name: SonarQube Quality Gate
         if: ${{ !inputs.skip-sonar && steps.sonar.outcome == 'success' }}
-        uses: sonarsource/sonarqube-quality-gate-action@v1.2.0
+        uses: SonarSource/sonarqube-quality-gate-action@v1.3.0
         continue-on-error: true  # Don't fail workflow on quality gate
         timeout-minutes: 5
         env:
