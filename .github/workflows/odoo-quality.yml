@@ -176,7 +176,7 @@ jobs:
           echo "::endgroup::"
 
       - name: SonarQube Scan
-        if: ${{ !inputs.skip-sonar && secrets.SONAR_TOKEN != '' }}
+        if: ${{ !inputs.skip-sonar }}
         id: sonar
         continue-on-error: true
         uses: SonarSource/sonarqube-scan-action@v4
@@ -195,7 +195,7 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
       - name: SonarQube Quality Gate
-        if: ${{ !inputs.skip-sonar && secrets.SONAR_TOKEN != '' && steps.sonar.outcome == 'success' }}
+        if: ${{ !inputs.skip-sonar && steps.sonar.outcome == 'success' }}
         uses: sonarsource/sonarqube-quality-gate-action@v1.2.0
         continue-on-error: true  # Don't fail workflow on quality gate
         timeout-minutes: 5
@@ -263,8 +263,8 @@ jobs:
           # SonarQube
           if [ "${{ inputs.skip-sonar }}" == "true" ]; then
             echo "| SonarQube | :fast_forward: Skipped |" >> $GITHUB_STEP_SUMMARY
-          elif [ -z "${{ secrets.SONAR_TOKEN }}" ]; then
-            echo "| SonarQube | :fast_forward: No token |" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.sonar.outcome }}" == "skipped" ]; then
+            echo "| SonarQube | :fast_forward: Not configured |" >> $GITHUB_STEP_SUMMARY
           else
             echo "| SonarQube | :white_check_mark: Analyzed |" >> $GITHUB_STEP_SUMMARY
           fi
