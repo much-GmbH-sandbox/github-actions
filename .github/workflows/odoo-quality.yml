@@ -305,6 +305,70 @@ jobs:
             echo "### :warning: Some checks failed" >> $GITHUB_STEP_SUMMARY
           fi
 
+      - name: Comment on PR
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const results = {
+              black: '${{ steps.black.outputs.result }}',
+              flake8: '${{ steps.flake8.outputs.result }}',
+              pylint: '${{ steps.pylint.outputs.result }}',
+              radon: '${{ steps.radon.outputs.result }}',
+              bandit: '${{ steps.bandit.outputs.result }}'
+            };
+
+            const getStatus = (tool, result) => {
+              if (result === 'pass') return '✅ Passed';
+              if (result === 'skip') return '⏭️ Skipped';
+              if (result === 'warn') return '⚠️ Warning';
+              return '❌ Failed';
+            };
+
+            const allPassed = '${{ steps.summary.outputs.all-passed }}' === 'true';
+
+            let body = `## Quality Check Results\n\n`;
+            body += `| Tool | Status |\n|------|--------|\n`;
+            body += `| Black (formatting) | ${getStatus('black', results.black)} |\n`;
+            body += `| Flake8 (linting) | ${getStatus('flake8', results.flake8)} |\n`;
+            body += `| Pylint-Odoo | ${getStatus('pylint', results.pylint)} |\n`;
+            body += `| Radon (complexity) | ${getStatus('radon', results.radon)} |\n`;
+            body += `| Bandit (security) | ${getStatus('bandit', results.bandit)} |\n\n`;
+
+            if (allPassed) {
+              body += `### 🎉 All checks passed!`;
+            } else {
+              body += `### ⚠️ Some checks need attention\n\n`;
+              body += `View the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.`;
+            }
+
+            // Find existing comment to update
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Quality Check Results')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
+
       - name: Enforce strict mode
         if: ${{ inputs.strict-mode && steps.summary.outputs.all-passed == 'false' }}
         run: |
