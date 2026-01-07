@@ -93,8 +93,8 @@ jobs:
     secrets: inherit
 
   # Stage 2: Unit Tests + Deploy (Jenkins)
-  # Reads pyproject.toml for run_tests, build_docker, edition
-  # Skips Jenkins if both run_tests=false AND build_docker=false
+  # Reads pyproject.toml for fast_tests, build_docker, edition
+  # Skips Jenkins if both fast_tests=false AND build_docker=false
   jenkins:
     needs: quality
     uses: YOUR_ORG/github-actions/.github/workflows/jenkins-trigger.yml@main
@@ -122,11 +122,11 @@ jobs:
 | `dry-run` | No | false | Log without triggering Jenkins |
 
 **Note:** Jenkins workflow reads `pyproject.toml` automatically for:
-- `run_tests` - controls unit test execution (default: true)
+- `fast_tests` - controls unit test execution (default: true)
 - `build_docker` - controls Docker build on deploy branches (default: false)
 - `version`, `edition` - Odoo configuration
 
-**Behavior:** If both `run_tests=false` AND `build_docker=false`, Jenkins is skipped entirely.
+**Behavior:** If both `fast_tests=false` AND `build_docker=false`, Jenkins is skipped entirely.
 
 ### pyproject.toml Configuration
 
@@ -135,7 +135,7 @@ Each repo must have a `pyproject.toml` with an `[odoo]` section:
 ```toml
 [odoo]
 version = 17.0           # Odoo version (required)
-run_tests = true         # Enable unit tests (default: true)
+fast_tests = true         # Enable unit tests (default: true)
 build_docker = true      # Enable Docker build on deploy branches (default: false)
 edition = "enterprise"   # enterprise or community (default: enterprise)
 git_hosts = ""           # Extra git hosts for Docker build (optional)
@@ -144,7 +144,7 @@ git_hosts = ""           # Extra git hosts for Docker build (optional)
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `version` | - | Odoo version (required) |
-| `run_tests` | true | Run unit tests via Jenkins |
+| `fast_tests` | true | Run unit tests via Jenkins |
 | `build_docker` | false | Build/push Docker image on deploy branches |
 | `edition` | enterprise | Odoo edition |
 | `git_hosts` | "" | Additional git hosts for Docker build |
@@ -152,28 +152,28 @@ git_hosts = ""           # Extra git hosts for Docker build (optional)
 ### What Happens
 
 ```
-PR opened/updated (run_tests=true):
+PR opened/updated (fast_tests=true):
   └─▶ Quality Checks (GHA) ─▶ Unit Tests (Jenkins)
 
-PR opened/updated (run_tests=false):
+PR opened/updated (fast_tests=false):
   └─▶ Quality Checks (GHA) ─▶ Jenkins Skipped
 
-Push to deploy branch (run_tests=true, build_docker=true):
+Push to deploy branch (fast_tests=true, build_docker=true):
   └─▶ Quality Checks (GHA) ─▶ Unit Tests + Docker Build (Jenkins)
 
-Push to deploy branch (run_tests=false, build_docker=true):
+Push to deploy branch (fast_tests=false, build_docker=true):
   └─▶ Quality Checks (GHA) ─▶ Docker Build Only (Jenkins)
 
-Push to non-deploy branch (run_tests=true):
+Push to non-deploy branch (fast_tests=true):
   └─▶ Quality Checks (GHA) ─▶ Unit Tests (Jenkins)
 
-Both run_tests=false AND build_docker=false:
+Both fast_tests=false AND build_docker=false:
   └─▶ Quality Checks (GHA) ─▶ Jenkins Skipped
 ```
 
 1. **Quality Checks**: Black, Flake8, Pylint-Odoo, Radon, Bandit, SonarQube
 2. **PR Comment**: Summary table posted showing pass/fail per tool
-3. **Jenkins Trigger**: Based on `run_tests` and `build_docker` flags from `pyproject.toml`
+3. **Jenkins Trigger**: Based on `fast_tests` and `build_docker` flags from `pyproject.toml`
 
 ---
 
@@ -257,7 +257,7 @@ gh secret set JENKINS_TOKEN --org YOUR_ORG --visibility all
 2. **Pipeline configured** to accept JSON payload with:
    - `repository`, `branch`, `commit`
    - `odoo_version`, `odoo_edition`, `git_hosts`
-   - `deploy`, `build_docker`, `run_tests`
+   - `deploy`, `build_docker`, `fast_tests`
    - `github_run_id`, `github_run_url`, `event`, `pr_number`
 
 ### Payload Example
@@ -272,7 +272,7 @@ gh secret set JENKINS_TOKEN --org YOUR_ORG --visibility all
   "git_hosts": "",
   "deploy": true,
   "build_docker": true,
-  "run_tests": true,
+  "fast_tests": true,
   "github_run_id": "123456",
   "github_run_url": "https://github.com/...",
   "event": "push",

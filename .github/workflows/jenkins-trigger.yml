@@ -3,17 +3,17 @@
 #
 # Reads pyproject.toml from the repo to determine:
 #   - Odoo version
-#   - Whether to run tests (run_tests = true)
+#   - Whether to run fast tests (fast_tests = true)
 #   - Whether to build Docker (build_docker = true)
 #   - Odoo edition (enterprise/community)
 #
 # Behavior:
-#   - run_tests controls unit test execution (default: true)
+#   - fast_tests controls unit test execution (default: true)
 #   - build_docker controls Docker build on deploy branches (default: false)
 #   - If both are false, Jenkins is skipped entirely
 #
 # Usage:
-#   - On PR: triggers unit tests only (if run_tests=true)
+#   - On PR: triggers unit tests only (if fast_tests=true)
 #   - On push to deploy branch: triggers tests and/or deploy based on flags
 
 name: Trigger Jenkins
@@ -51,9 +51,9 @@ on:
       build-docker:
         description: 'Whether Docker build is enabled'
         value: ${{ jobs.trigger.outputs.build-docker }}
-      run-tests:
-        description: 'Whether unit tests are enabled'
-        value: ${{ jobs.trigger.outputs.run-tests }}
+      fast-tests:
+        description: 'Whether fast tests are enabled'
+        value: ${{ jobs.trigger.outputs.fast-tests }}
 
 jobs:
   trigger:
@@ -64,7 +64,7 @@ jobs:
       skipped: ${{ steps.mode.outputs.skip }}
       odoo-version: ${{ steps.config.outputs.odoo-version }}
       build-docker: ${{ steps.config.outputs.build-docker }}
-      run-tests: ${{ steps.config.outputs.run-tests }}
+      fast-tests: ${{ steps.config.outputs.fast-tests }}
 
     steps:
       - name: Checkout code
@@ -83,7 +83,7 @@ jobs:
             echo "::warning::pyproject.toml not found - using defaults"
             echo "odoo-version=17" >> $GITHUB_OUTPUT
             echo "build-docker=false" >> $GITHUB_OUTPUT
-            echo "run-tests=true" >> $GITHUB_OUTPUT
+            echo "fast-tests=true" >> $GITHUB_OUTPUT
             echo "odoo-edition=enterprise" >> $GITHUB_OUTPUT
             echo "git-hosts=" >> $GITHUB_OUTPUT
             exit 0
@@ -108,13 +108,13 @@ jobs:
           echo "build-docker=$BUILD_DOCKER" >> $GITHUB_OUTPUT
           echo "Build Docker: $BUILD_DOCKER"
 
-          # Extract run_tests (true/false, default: true)
-          RUN_TESTS=$(grep -E "^run_tests\s*=" pyproject.toml | head -1 | sed 's/.*=\s*//; s/[" ]//g')
-          if [ "$RUN_TESTS" != "false" ]; then
-            RUN_TESTS="true"
+          # Extract fast_tests (true/false, default: true)
+          FAST_TESTS=$(grep -E "^fast_tests\s*=" pyproject.toml | head -1 | sed 's/.*=\s*//; s/[" ]//g')
+          if [ "$FAST_TESTS" != "false" ]; then
+            FAST_TESTS="true"
           fi
-          echo "run-tests=$RUN_TESTS" >> $GITHUB_OUTPUT
-          echo "Run Tests: $RUN_TESTS"
+          echo "fast-tests=$FAST_TESTS" >> $GITHUB_OUTPUT
+          echo "Fast Tests: $FAST_TESTS"
 
           # Extract edition (enterprise/community)
           ODOO_EDITION=$(grep -E "^edition\s*=" pyproject.toml | head -1 | sed 's/.*=\s*//; s/[" ]//g')
@@ -135,7 +135,7 @@ jobs:
         id: mode
         run: |
           # Get config values
-          RUN_TESTS="${{ steps.config.outputs.run-tests }}"
+          FAST_TESTS="${{ steps.config.outputs.fast-tests }}"
           BUILD_DOCKER="${{ steps.config.outputs.build-docker }}"
           IS_PUSH="${{ github.event_name == 'push' }}"
           CURRENT_BRANCH="${{ github.ref_name }}"
@@ -156,28 +156,28 @@ jobs:
           echo "Current Branch: $CURRENT_BRANCH"
           echo "Deploy Branches: $DEPLOY_BRANCHES"
           echo "Is Deploy Branch: $IS_DEPLOY_BRANCH"
-          echo "Run Tests: $RUN_TESTS"
+          echo "Fast Tests: $FAST_TESTS"
           echo "Build Docker: $BUILD_DOCKER"
 
           # Skip Jenkins entirely if nothing to do
-          if [ "$RUN_TESTS" == "false" ] && [ "$BUILD_DOCKER" == "false" ]; then
+          if [ "$FAST_TESTS" == "false" ] && [ "$BUILD_DOCKER" == "false" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
             echo "deploy=false" >> $GITHUB_OUTPUT
             echo "mode=Skipped (no tests, no deploy configured)" >> $GITHUB_OUTPUT
-            echo "::notice::Skipping Jenkins - both run_tests and build_docker are false"
+            echo "::notice::Skipping Jenkins - both fast_tests and build_docker are false"
             exit 0
           fi
 
           # PRs never deploy, only run tests (if enabled)
           if [ "$IS_PUSH" != "true" ]; then
-            if [ "$RUN_TESTS" == "true" ]; then
+            if [ "$FAST_TESTS" == "true" ]; then
               echo "skip=false" >> $GITHUB_OUTPUT
               echo "deploy=false" >> $GITHUB_OUTPUT
               echo "mode=Unit Tests Only" >> $GITHUB_OUTPUT
             else
               echo "skip=true" >> $GITHUB_OUTPUT
               echo "deploy=false" >> $GITHUB_OUTPUT
-              echo "mode=Skipped (run_tests=false for PR)" >> $GITHUB_OUTPUT
+              echo "mode=Skipped (fast_tests=false for PR)" >> $GITHUB_OUTPUT
             fi
             exit 0
           fi
@@ -189,17 +189,17 @@ jobs:
           fi
 
           # Determine final mode
-          if [ "$RUN_TESTS" == "true" ] && [ "$DEPLOY" == "true" ]; then
+          if [ "$FAST_TESTS" == "true" ] && [ "$DEPLOY" == "true" ]; then
             MODE="Unit Tests + Docker Build"
-          elif [ "$RUN_TESTS" == "true" ]; then
+          elif [ "$FAST_TESTS" == "true" ]; then
             MODE="Unit Tests Only"
           elif [ "$DEPLOY" == "true" ]; then
             MODE="Docker Build Only"
           else
-            # Non-deploy branch with run_tests=false
+            # Non-deploy branch with fast_tests=false
             echo "skip=true" >> $GITHUB_OUTPUT
             echo "deploy=false" >> $GITHUB_OUTPUT
-            echo "mode=Skipped (run_tests=false, not a deploy branch)" >> $GITHUB_OUTPUT
+            echo "mode=Skipped (fast_tests=false, not a deploy branch)" >> $GITHUB_OUTPUT
             exit 0
           fi
 
@@ -220,7 +220,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Run Tests | \`${{ steps.config.outputs.run-tests }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Fast Tests | \`${{ steps.config.outputs.fast-tests }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Build Docker | \`${{ steps.config.outputs.build-docker }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo ":information_source: No Jenkins job was triggered." >> $GITHUB_STEP_SUMMARY
@@ -251,7 +251,7 @@ jobs:
           echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Odoo Version | \`${{ steps.config.outputs.odoo-version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Run Tests | \`${{ steps.config.outputs.run-tests }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Fast Tests | \`${{ steps.config.outputs.fast-tests }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Build Docker | \`${{ steps.config.outputs.build-docker }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Edition | \`${{ steps.config.outputs.odoo-edition }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -278,7 +278,7 @@ jobs:
           echo "  Branch: ${{ github.ref_name }}"
           echo "  Commit: ${{ github.sha }}"
           echo "  Deploy: ${{ steps.mode.outputs.deploy }}"
-          echo "  Run Tests: ${{ steps.config.outputs.run-tests }}"
+          echo "  Fast Tests: ${{ steps.config.outputs.fast-tests }}"
 
           RESPONSE=$(curl -s -w "\n%{http_code}" \
             -X POST "${{ secrets.JENKINS_URL }}/generic-webhook-trigger/invoke" \
@@ -293,7 +293,7 @@ jobs:
               "git_hosts": "${{ steps.config.outputs.git-hosts }}",
               "deploy": ${{ steps.mode.outputs.deploy }},
               "build_docker": ${{ steps.config.outputs.build-docker }},
-              "run_tests": ${{ steps.config.outputs.run-tests }},
+              "fast_tests": ${{ steps.config.outputs.fast-tests }},
               "github_run_id": "${{ github.run_id }}",
               "github_run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
               "event": "${{ github.event_name }}",
@@ -320,7 +320,7 @@ jobs:
           echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Odoo Version | \`${{ steps.config.outputs.odoo-version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Run Tests | \`${{ steps.config.outputs.run-tests }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Fast Tests | \`${{ steps.config.outputs.fast-tests }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Build Docker | \`${{ steps.config.outputs.build-docker }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Edition | \`${{ steps.config.outputs.odoo-edition }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
