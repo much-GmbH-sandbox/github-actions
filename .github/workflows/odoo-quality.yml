@@ -28,6 +28,9 @@ on:
         type: boolean
         default: false
     secrets:
+      CONFIG_TOKEN:
+        description: 'PAT with repo scope to access private github-actions repo (only needed if repo is private)'
+        required: false
       SONAR_TOKEN:
         required: false
       SONAR_HOST_URL:
@@ -66,28 +69,39 @@ jobs:
 
       - name: Download configs from central repo
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Use CONFIG_TOKEN if provided (for private repo), otherwise github.token (for public repo)
+          GH_TOKEN: ${{ secrets.CONFIG_TOKEN || github.token }}
         run: |
           echo "::group::Downloading configs from github-actions repo"
-          # Function to download file from private repo via GitHub API
+
+          # Function to download file from repo via GitHub API
           download_file() {
             local file_path=$1
             local output_path=$2
             echo "Downloading $file_path..."
-            curl -sL -H "Authorization: token $GH_TOKEN" \
+
+            HTTP_CODE=$(curl -sL -w "%{http_code}" \
+              -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3.raw" \
               "https://api.github.com/repos/${{ github.repository_owner }}/github-actions/contents/$file_path" \
-              -o "$output_path"
+              -o "$output_path")
+
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "::error::Failed to download $file_path (HTTP $HTTP_CODE)"
+              echo "::error::If github-actions repo is private, set CONFIG_TOKEN org secret with a PAT that has repo scope"
+              cat "$output_path"  # Show error response
+              return 1
+            fi
           }
 
           # Download requirements
-          download_file "dev-requirements/base.txt" "/tmp/base.txt"
-          download_file "dev-requirements/odoo${{ inputs.odoo-version }}.txt" "/tmp/odoo.txt"
+          download_file "dev-requirements/base.txt" "/tmp/base.txt" || exit 1
+          download_file "dev-requirements/odoo${{ inputs.odoo-version }}.txt" "/tmp/odoo.txt" || exit 1
 
           # Download configs
-          download_file "configs/.flake8" "/tmp/.flake8"
-          download_file "configs/.bandit" "/tmp/.bandit"
-          download_file "configs/.pylintrc-odoo${{ inputs.odoo-version }}" "/tmp/.pylintrc"
+          download_file "configs/.flake8" "/tmp/.flake8" || exit 1
+          download_file "configs/.bandit" "/tmp/.bandit" || exit 1
+          download_file "configs/.pylintrc-odoo${{ inputs.odoo-version }}" "/tmp/.pylintrc" || exit 1
 
           echo "Downloaded files:"
           ls -la /tmp/*.txt /tmp/.flake8 /tmp/.bandit /tmp/.pylintrc
