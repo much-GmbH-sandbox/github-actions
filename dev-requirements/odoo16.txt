@@ -1,0 +1,4 @@
+# Odoo 16 specific requirements
+# pylint-odoo version compatible with Odoo 16
+
+pylint-odoo==8.0.0

@@ -1,0 +1,49 @@
+# Flake8 configuration for Odoo modules
+# https://flake8.pycqa.org/en/latest/user/configuration.html
+
+[flake8]
+# Maximum line length (Odoo standard)
+max-line-length = 120
+
+# Exclude common directories
+exclude =
+    .git,
+    __pycache__,
+    .eggs,
+    *.egg-info,
+    build,
+    dist,
+    .tox,
+    .venv,
+    venv,
+    node_modules,
+    static/lib,
+    static/src/lib,
+
+# Ignore specific errors that conflict with Odoo patterns
+ignore =
+    # E501: Line too long (handled by max-line-length, but some exceptions)
+    # W503: Line break before binary operator (conflicts with Black)
+    W503,
+    # W504: Line break after binary operator
+    W504,
+    # E203: Whitespace before ':' (conflicts with Black for slices)
+    E203,
+
+# Per-file ignores for specific patterns
+per-file-ignores =
+    # __init__.py files often have unused imports for re-exporting
+    __init__.py: F401
+    # Migration scripts may have unused imports
+    */migrations/*.py: F401
+    # Test files may have more flexibility
+    */tests/*.py: E501
+
+# Show source code for each error
+show-source = true
+
+# Count errors
+count = true
+
+# Statistics
+statistics = true

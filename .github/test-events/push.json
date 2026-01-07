@@ -1,0 +1,24 @@
+{
+  "ref": "refs/heads/main",
+  "before": "0000000000000000000000000000000000000000",
+  "after": "abc1234567890abcdef1234567890abcdef12345",
+  "repository": {
+    "name": "test-addon",
+    "full_name": "much-GmbH-sandbox/test-addon",
+    "html_url": "https://github.com/much-GmbH-sandbox/test-addon",
+    "owner": {
+      "login": "much-GmbH-sandbox"
+    }
+  },
+  "head_commit": {
+    "id": "abc1234567890abcdef1234567890abcdef12345",
+    "message": "test: validate workflow",
+    "author": {
+      "name": "Test User",
+      "email": "test@example.com"
+    }
+  },
+  "pusher": {
+    "name": "test-user"
+  }
+}

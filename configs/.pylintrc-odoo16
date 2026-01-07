@@ -1,0 +1,97 @@
+# Pylint configuration for Odoo 16 modules
+# Uses pylint-odoo plugin for Odoo-specific checks
+
+[MASTER]
+load-plugins=pylint_odoo
+
+# Odoo version for version-specific checks
+valid_odoo_versions=16.0
+
+# Score threshold (0-10)
+fail-under=5.0
+
+[ODOOLINT]
+# Odoo manifest version format
+manifest_version_format={major}.{minor}.1.0.{patch}
+
+# Required manifest keys
+manifest_required_keys=name,version,license
+
+# Deprecated manifest keys
+manifest_deprecated_keys=
+
+# Required license values
+license_allowed=AGPL-3,GPL-2,GPL-2 or any later version,GPL-3,GPL-3 or any later version,LGPL-3,OEEL-1
+
+[MESSAGES CONTROL]
+# Disable specific messages
+disable=
+    # Standard pylint messages that are too noisy for Odoo
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    too-few-public-methods,
+    too-many-arguments,
+    too-many-locals,
+    too-many-branches,
+    too-many-statements,
+    too-many-return-statements,
+    too-many-instance-attributes,
+    duplicate-code,
+    fixme,
+    # Import related (Odoo has specific import patterns)
+    wrong-import-order,
+    ungrouped-imports,
+    wrong-import-position,
+    # Odoo-specific disables
+    consider-merging-classes-inherited,
+
+[FORMAT]
+# Maximum line length
+max-line-length=120
+
+# Maximum number of lines in a module
+max-module-lines=2000
+
+[BASIC]
+# Good variable names
+good-names=i,j,k,ex,_,id,cr,uid,ids,env
+
+# Regular expressions for valid names
+const-naming-style=UPPER_CASE
+class-naming-style=PascalCase
+function-naming-style=snake_case
+method-naming-style=snake_case
+attr-naming-style=snake_case
+argument-naming-style=snake_case
+variable-naming-style=snake_case
+
+[DESIGN]
+# Maximum number of arguments for function/method
+max-args=10
+
+# Maximum number of attributes for a class
+max-attributes=20
+
+# Maximum number of public methods for a class
+max-public-methods=30
+
+[SIMILARITIES]
+# Minimum lines number of a similarity
+min-similarity-lines=10
+
+# Ignore comments when computing similarities
+ignore-comments=yes
+
+# Ignore docstrings when computing similarities
+ignore-docstrings=yes
+
+# Ignore imports when computing similarities
+ignore-imports=yes
+
+[TYPECHECK]
+# List of class names for which member attributes should not be checked
+ignored-classes=SQLObject,optparse.Values,thread._local,_thread._local
+
+# List of module names for which member attributes should not be checked
+ignored-modules=odoo.http

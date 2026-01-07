@@ -1,0 +1,4 @@
+# Odoo 14 specific requirements
+# pylint-odoo version compatible with Odoo 14
+
+pylint-odoo==7.0.0

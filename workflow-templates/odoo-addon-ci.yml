@@ -1,0 +1,86 @@
+# Odoo Addon CI Workflow Template
+# Copy this file to your repository at .github/workflows/ci.yml
+# Customize the odoo-version and python-version inputs for your project
+
+name: CI
+
+on:
+  push:
+    branches: [main, staging, 'staging-*', develop]
+    paths-ignore:
+      - '**.md'
+      - '**.rst'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'CHANGELOG.md'
+  pull_request:
+    branches: [main, staging]
+    paths-ignore:
+      - '**.md'
+      - '**.rst'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'CHANGELOG.md'
+
+# Cancel in-progress runs for same PR/branch (saves GitHub Actions minutes)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Optional: Detect if code actually changed
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '**.py'
+              - '**.xml'
+              - '**.csv'
+              - '**.js'
+              - '**.scss'
+              - '**/requirements*.txt'
+              - '**/__manifest__.py'
+
+  # Quality checks
+  quality:
+    name: Quality
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    # CUSTOMIZE: Change the repository owner to match your sandbox/production org
+    uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@main
+    with:
+      # CUSTOMIZE: Set your Odoo version (14, 15, 16, 17, 18)
+      odoo-version: '17'
+      # CUSTOMIZE: Set your Python version
+      python-version: '3.10'
+      # Optional: Skip SonarQube for faster runs
+      # skip-sonar: true
+      # Optional: Fail on any quality issue
+      # strict-mode: true
+    secrets: inherit
+
+  # Trigger Jenkins for Docker builds (only on protected branches)
+  # Uncomment when ready to integrate with Jenkins
+  # deploy:
+  #   name: Deploy
+  #   needs: quality
+  #   if: |
+  #     needs.quality.result == 'success' &&
+  #     (github.ref == 'refs/heads/main' ||
+  #      github.ref == 'refs/heads/staging' ||
+  #      startsWith(github.ref, 'refs/heads/staging-'))
+  #   uses: much-GmbH-sandbox/github-actions/.github/workflows/jenkins-trigger.yml@main
+  #   with:
+  #     job-name: 'odoo-docker-build'
+  #     dry-run: true  # Set to false when Jenkins is configured
+  #   secrets: inherit

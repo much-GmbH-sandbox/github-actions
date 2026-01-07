@@ -1,0 +1,105 @@
+# Jenkins Build Trigger - Reusable Workflow
+# Triggers Jenkins Docker build jobs after quality checks pass
+# NOTE: For sandbox testing, this is a placeholder that logs but doesn't trigger real Jenkins
+
+name: Trigger Jenkins Build
+
+on:
+  workflow_call:
+    inputs:
+      job-name:
+        description: 'Jenkins job name to trigger'
+        required: false
+        type: string
+        default: 'odoo-docker-build'
+      branch:
+        description: 'Branch name'
+        required: false
+        type: string
+        default: ${{ github.ref_name }}
+      commit:
+        description: 'Commit SHA'
+        required: false
+        type: string
+        default: ${{ github.sha }}
+      dry-run:
+        description: 'If true, log but do not trigger Jenkins'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      JENKINS_URL:
+        required: false
+      JENKINS_USER:
+        required: false
+      JENKINS_TOKEN:
+        required: false
+
+jobs:
+  trigger:
+    name: Trigger Jenkins
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Jenkins configuration
+        id: validate
+        run: |
+          if [ -z "${{ secrets.JENKINS_URL }}" ]; then
+            echo "::warning::JENKINS_URL not configured - running in dry-run mode"
+            echo "dry-run=true" >> $GITHUB_OUTPUT
+          elif [ "${{ inputs.dry-run }}" == "true" ]; then
+            echo "Dry-run mode enabled"
+            echo "dry-run=true" >> $GITHUB_OUTPUT
+          else
+            echo "dry-run=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Log Jenkins trigger (dry-run)
+        if: steps.validate.outputs.dry-run == 'true'
+        run: |
+          echo "## Jenkins Trigger (Dry Run)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Would trigger:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Job: \`${{ inputs.job-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Branch: \`${{ inputs.branch }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: \`${{ inputs.commit }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Repository: \`${{ github.repository }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo ":information_source: This is a dry-run. No Jenkins job was triggered." >> $GITHUB_STEP_SUMMARY
+
+          echo "::notice::Dry-run: Would trigger Jenkins job '${{ inputs.job-name }}' for ${{ github.repository }}@${{ inputs.branch }}"
+
+      - name: Trigger Jenkins Job
+        if: steps.validate.outputs.dry-run == 'false'
+        run: |
+          echo "Triggering Jenkins job: ${{ inputs.job-name }}"
+          echo "  Branch: ${{ inputs.branch }}"
+          echo "  Commit: ${{ inputs.commit }}"
+          echo "  Repo: ${{ github.repository }}"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST "${{ secrets.JENKINS_URL }}/job/${{ inputs.job-name }}/buildWithParameters" \
+            -u "${{ secrets.JENKINS_USER }}:${{ secrets.JENKINS_TOKEN }}" \
+            -d "BRANCH=${{ inputs.branch }}" \
+            -d "COMMIT=${{ inputs.commit }}" \
+            -d "REPO=${{ github.repository }}" \
+            -d "GITHUB_RUN_ID=${{ github.run_id }}" \
+            -d "FROM_GITHUB_ACTIONS=true")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [[ "$HTTP_CODE" != "201" && "$HTTP_CODE" != "200" ]]; then
+            echo "::error::Jenkins trigger failed with HTTP $HTTP_CODE"
+            echo "$BODY"
+            exit 1
+          fi
+
+          echo "## Jenkins Build Triggered" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Job: \`${{ inputs.job-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Branch: \`${{ inputs.branch }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: \`${{ inputs.commit }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo ":rocket: Jenkins build started successfully!" >> $GITHUB_STEP_SUMMARY
+
+          echo "::notice::Jenkins job '${{ inputs.job-name }}' triggered successfully"

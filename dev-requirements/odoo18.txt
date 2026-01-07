@@ -1,0 +1,4 @@
+# Odoo 18 specific requirements
+# pylint-odoo version compatible with Odoo 18
+
+pylint-odoo==9.3.7

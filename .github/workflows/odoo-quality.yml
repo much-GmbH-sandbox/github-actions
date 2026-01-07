@@ -1,0 +1,285 @@
+# Consolidated Odoo Quality Checks - Cost Optimized
+# Single job runs all tools sequentially to minimize GitHub Actions minutes
+# Billing: GitHub rounds each job up to nearest minute, so 5 parallel 30-second jobs = 5 min billed
+# This workflow: ~3-4 min actual = 4 min billed (saves 20-40%)
+
+name: Odoo Quality Checks
+
+on:
+  workflow_call:
+    inputs:
+      odoo-version:
+        description: 'Odoo version (14, 15, 16, 17, 18)'
+        required: true
+        type: string
+      python-version:
+        description: 'Python version'
+        required: false
+        type: string
+        default: '3.10'
+      skip-sonar:
+        description: 'Skip SonarQube analysis'
+        required: false
+        type: boolean
+        default: false
+      strict-mode:
+        description: 'Fail workflow on any check failure'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      SONAR_TOKEN:
+        required: false
+      SONAR_HOST_URL:
+        required: false
+    outputs:
+      quality-passed:
+        description: 'Whether all quality checks passed'
+        value: ${{ jobs.quality.outputs.all-passed }}
+
+jobs:
+  quality:
+    name: Quality Checks (Odoo ${{ inputs.odoo-version }})
+    runs-on: ubuntu-latest
+    outputs:
+      all-passed: ${{ steps.summary.outputs.all-passed }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for SonarQube blame
+
+      - name: Set up Python ${{ inputs.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: 'pip'
+          cache-dependency-path: |
+            **/requirements*.txt
+            **/dev-requirements*.txt
+
+      - name: Install quality tools
+        run: |
+          echo "::group::Installing quality tools"
+          # Download centralized requirements from this repo
+          BASE_URL="https://raw.githubusercontent.com/${{ github.repository_owner }}/github-actions/main"
+
+          echo "Downloading base requirements..."
+          curl -sL "$BASE_URL/dev-requirements/base.txt" -o /tmp/base.txt
+          cat /tmp/base.txt
+
+          echo "Downloading Odoo ${{ inputs.odoo-version }} requirements..."
+          curl -sL "$BASE_URL/dev-requirements/odoo${{ inputs.odoo-version }}.txt" -o /tmp/odoo.txt
+          cat /tmp/odoo.txt
+
+          pip install -q -r /tmp/base.txt -r /tmp/odoo.txt
+          echo "::endgroup::"
+
+      - name: Black (formatting)
+        id: black
+        continue-on-error: true
+        run: |
+          echo "::group::Black Check"
+          if python -m black --check --diff .; then
+            echo "result=pass" >> $GITHUB_OUTPUT
+            echo "Black: All files properly formatted"
+          else
+            echo "result=fail" >> $GITHUB_OUTPUT
+            echo "::warning::Black formatting issues found"
+          fi
+          echo "::endgroup::"
+
+      - name: Flake8 (linting)
+        id: flake8
+        continue-on-error: true
+        run: |
+          echo "::group::Flake8 Check"
+          # Download centralized config
+          BASE_URL="https://raw.githubusercontent.com/${{ github.repository_owner }}/github-actions/main"
+          curl -sL "$BASE_URL/configs/.flake8" -o /tmp/.flake8
+
+          if python -m flake8 . --config=/tmp/.flake8; then
+            echo "result=pass" >> $GITHUB_OUTPUT
+            echo "Flake8: No issues found"
+          else
+            echo "result=fail" >> $GITHUB_OUTPUT
+            echo "::warning::Flake8 linting issues found"
+          fi
+          echo "::endgroup::"
+
+      - name: Pylint-Odoo
+        id: pylint
+        continue-on-error: true
+        run: |
+          echo "::group::Pylint-Odoo Check"
+          # Find all Odoo modules
+          MODULES=$(find . -name '__manifest__.py' -exec dirname {} \; | sort -u | tr '\n' ' ')
+
+          if [ -z "$MODULES" ]; then
+            echo "No Odoo modules found (no __manifest__.py files)"
+            echo "result=skip" >> $GITHUB_OUTPUT
+          else
+            echo "Found modules: $MODULES"
+
+            # Download version-specific pylintrc
+            BASE_URL="https://raw.githubusercontent.com/${{ github.repository_owner }}/github-actions/main"
+            curl -sL "$BASE_URL/configs/.pylintrc-odoo${{ inputs.odoo-version }}" -o /tmp/.pylintrc
+
+            if python -m pylint $MODULES --rcfile=/tmp/.pylintrc --output-format=colorized; then
+              echo "result=pass" >> $GITHUB_OUTPUT
+              echo "Pylint-Odoo: No issues found"
+            else
+              echo "result=fail" >> $GITHUB_OUTPUT
+              echo "::warning::Pylint-Odoo issues found"
+            fi
+          fi
+          echo "::endgroup::"
+
+      - name: Radon (complexity)
+        id: radon
+        continue-on-error: true
+        run: |
+          echo "::group::Radon Complexity Check"
+          python -m radon cc . -a -nc --total-average
+
+          # Check average complexity grade
+          AVG=$(python -m radon cc . -a -nc --total-average 2>/dev/null | grep "Average complexity" | grep -oE '[A-F]' | head -1)
+          echo "Average complexity grade: $AVG"
+
+          if [[ "$AVG" =~ ^[DE]$ ]]; then
+            echo "result=warn" >> $GITHUB_OUTPUT
+            echo "::warning::High average complexity: $AVG"
+          else
+            echo "result=pass" >> $GITHUB_OUTPUT
+            echo "Radon: Complexity within acceptable range"
+          fi
+          echo "::endgroup::"
+
+      - name: Bandit (security)
+        id: bandit
+        continue-on-error: true
+        run: |
+          echo "::group::Bandit Security Check"
+          # Download centralized config
+          BASE_URL="https://raw.githubusercontent.com/${{ github.repository_owner }}/github-actions/main"
+          curl -sL "$BASE_URL/configs/.bandit" -o /tmp/.bandit
+
+          if python -m bandit -r . -c /tmp/.bandit -f custom \
+            --msg-template "{relpath}:{line}: [{severity}] {test_id}: {msg}"; then
+            echo "result=pass" >> $GITHUB_OUTPUT
+            echo "Bandit: No security issues found"
+          else
+            echo "result=fail" >> $GITHUB_OUTPUT
+            echo "::warning::Bandit security issues found"
+          fi
+          echo "::endgroup::"
+
+      - name: SonarQube Scan
+        if: ${{ !inputs.skip-sonar && secrets.SONAR_TOKEN != '' }}
+        id: sonar
+        continue-on-error: true
+        uses: SonarSource/sonarqube-scan-action@v4
+        with:
+          args: >
+            -Dsonar.projectKey=${{ github.event.repository.name }}
+            -Dsonar.organization=${{ github.repository_owner }}
+            -Dsonar.sources=./
+            -Dsonar.python.version=${{ inputs.python-version }}
+            ${{ github.event_name == 'pull_request' &&
+                format('-Dsonar.pullrequest.key={0} -Dsonar.pullrequest.branch={1} -Dsonar.pullrequest.base={2}',
+                       github.event.pull_request.number, github.head_ref, github.base_ref) ||
+                format('-Dsonar.branch.name={0}', github.ref_name) }}
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      - name: SonarQube Quality Gate
+        if: ${{ !inputs.skip-sonar && secrets.SONAR_TOKEN != '' && steps.sonar.outcome == 'success' }}
+        uses: sonarsource/sonarqube-quality-gate-action@v1.2.0
+        continue-on-error: true  # Don't fail workflow on quality gate
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      - name: Generate Summary
+        id: summary
+        if: always()
+        run: |
+          echo "## Quality Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Odoo Version**: ${{ inputs.odoo-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Python Version**: ${{ inputs.python-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Tool | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          ALL_PASSED=true
+
+          # Black
+          if [ "${{ steps.black.outputs.result }}" == "pass" ]; then
+            echo "| Black | :white_check_mark: Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Black | :x: Failed |" >> $GITHUB_STEP_SUMMARY
+            ALL_PASSED=false
+          fi
+
+          # Flake8
+          if [ "${{ steps.flake8.outputs.result }}" == "pass" ]; then
+            echo "| Flake8 | :white_check_mark: Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Flake8 | :x: Failed |" >> $GITHUB_STEP_SUMMARY
+            ALL_PASSED=false
+          fi
+
+          # Pylint
+          if [ "${{ steps.pylint.outputs.result }}" == "pass" ]; then
+            echo "| Pylint-Odoo | :white_check_mark: Passed |" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.pylint.outputs.result }}" == "skip" ]; then
+            echo "| Pylint-Odoo | :fast_forward: Skipped (no modules) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Pylint-Odoo | :x: Failed |" >> $GITHUB_STEP_SUMMARY
+            ALL_PASSED=false
+          fi
+
+          # Radon
+          if [ "${{ steps.radon.outputs.result }}" == "pass" ]; then
+            echo "| Radon | :white_check_mark: Passed |" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.radon.outputs.result }}" == "warn" ]; then
+            echo "| Radon | :warning: High complexity |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Radon | :x: Failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Bandit
+          if [ "${{ steps.bandit.outputs.result }}" == "pass" ]; then
+            echo "| Bandit | :white_check_mark: Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Bandit | :x: Security issues |" >> $GITHUB_STEP_SUMMARY
+            ALL_PASSED=false
+          fi
+
+          # SonarQube
+          if [ "${{ inputs.skip-sonar }}" == "true" ]; then
+            echo "| SonarQube | :fast_forward: Skipped |" >> $GITHUB_STEP_SUMMARY
+          elif [ -z "${{ secrets.SONAR_TOKEN }}" ]; then
+            echo "| SonarQube | :fast_forward: No token |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| SonarQube | :white_check_mark: Analyzed |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "all-passed=$ALL_PASSED" >> $GITHUB_OUTPUT
+
+          if [ "$ALL_PASSED" == "true" ]; then
+            echo "### :tada: All checks passed!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### :warning: Some checks failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Enforce strict mode
+        if: ${{ inputs.strict-mode && steps.summary.outputs.all-passed == 'false' }}
+        run: |
+          echo "::error::Quality checks failed in strict mode"
+          exit 1
