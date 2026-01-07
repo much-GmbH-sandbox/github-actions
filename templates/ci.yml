@@ -3,20 +3,22 @@
 # Reads configuration from pyproject.toml:
 #   [odoo]
 #   version = 17.0
-#   build_docker = true
+#   build_docker = true    # Enable Docker build on deploy branches
+#   run_tests = true       # Enable unit tests (default: true)
 #   edition = "enterprise"
 #
 # Flow:
-#   PR: Quality Checks → Jenkins (Unit Tests)
-#   Push to main: Quality Checks → Jenkins (Unit Tests + Docker Build)
+#   PR: Quality Checks → Jenkins (Unit Tests only, if run_tests=true)
+#   Push to deploy branch: Quality Checks → Jenkins (Tests and/or Deploy based on flags)
+#   Push to non-deploy branch: Quality Checks → Jenkins (Tests only, if run_tests=true)
 
 name: CI/CD
 
 on:
   push:
-    branches: [main]  # Deploy branch - adjust if needed
+    branches: [main, staging, production]  # Adjust to your branches
   pull_request:
-    branches: [main]
+    branches: [main, staging]              # PRs to these branches trigger CI
   workflow_dispatch:
 
 concurrency:
@@ -45,12 +47,15 @@ jobs:
   # ============================================
   # Reads pyproject.toml automatically for:
   #   - odoo version
-  #   - build_docker (true/false)
+  #   - run_tests (true/false) - controls unit test execution
+  #   - build_docker (true/false) - controls Docker build on deploy branches
   #   - edition (enterprise/community)
+  #
+  # Skips Jenkins entirely if both run_tests=false AND build_docker=false
   jenkins:
     needs: quality
     uses: YOUR_ORG/github-actions/.github/workflows/jenkins-trigger.yml@main
     with:
-      deploy-branch: 'main'   # Branch that triggers Docker build
-      # dry-run: true         # Uncomment for testing
+      deploy-branches: 'main,production'  # Branches that trigger Docker deploy (comma-separated)
+      # dry-run: true                     # Uncomment for testing without triggering Jenkins
     secrets: inherit

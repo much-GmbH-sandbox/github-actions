@@ -3,20 +3,26 @@
 #
 # Reads pyproject.toml from the repo to determine:
 #   - Odoo version
+#   - Whether to run tests (run_tests = true)
 #   - Whether to build Docker (build_docker = true)
 #   - Odoo edition (enterprise/community)
 #
+# Behavior:
+#   - run_tests controls unit test execution (default: true)
+#   - build_docker controls Docker build on deploy branches (default: false)
+#   - If both are false, Jenkins is skipped entirely
+#
 # Usage:
-#   - On PR: triggers unit tests only
-#   - On push to main: triggers unit tests + Docker build (if build_docker = true)
+#   - On PR: triggers unit tests only (if run_tests=true)
+#   - On push to deploy branch: triggers tests and/or deploy based on flags
 
 name: Trigger Jenkins
 
 on:
   workflow_call:
     inputs:
-      deploy-branch:
-        description: 'Branch that triggers deploy (default: main)'
+      deploy-branches:
+        description: 'Branches that trigger deploy (comma-separated, e.g., "main,production")'
         required: false
         type: string
         default: 'main'
@@ -36,12 +42,18 @@ on:
       triggered:
         description: 'Whether Jenkins was triggered'
         value: ${{ jobs.trigger.outputs.triggered }}
+      skipped:
+        description: 'Whether Jenkins was skipped (no tests, no deploy)'
+        value: ${{ jobs.trigger.outputs.skipped }}
       odoo-version:
         description: 'Odoo version from pyproject.toml'
         value: ${{ jobs.trigger.outputs.odoo-version }}
       build-docker:
         description: 'Whether Docker build is enabled'
         value: ${{ jobs.trigger.outputs.build-docker }}
+      run-tests:
+        description: 'Whether unit tests are enabled'
+        value: ${{ jobs.trigger.outputs.run-tests }}
 
 jobs:
   trigger:
@@ -49,8 +61,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       triggered: ${{ steps.trigger.outputs.triggered }}
+      skipped: ${{ steps.mode.outputs.skip }}
       odoo-version: ${{ steps.config.outputs.odoo-version }}
       build-docker: ${{ steps.config.outputs.build-docker }}
+      run-tests: ${{ steps.config.outputs.run-tests }}
 
     steps:
       - name: Checkout code
@@ -69,6 +83,7 @@ jobs:
             echo "::warning::pyproject.toml not found - using defaults"
             echo "odoo-version=17" >> $GITHUB_OUTPUT
             echo "build-docker=false" >> $GITHUB_OUTPUT
+            echo "run-tests=true" >> $GITHUB_OUTPUT
             echo "odoo-edition=enterprise" >> $GITHUB_OUTPUT
             echo "git-hosts=" >> $GITHUB_OUTPUT
             exit 0
@@ -85,13 +100,21 @@ jobs:
           echo "odoo-version=$ODOO_VERSION" >> $GITHUB_OUTPUT
           echo "Odoo Version: $ODOO_VERSION"
 
-          # Extract build_docker (true/false)
+          # Extract build_docker (true/false, default: false)
           BUILD_DOCKER=$(grep -E "^build_docker\s*=" pyproject.toml | head -1 | sed 's/.*=\s*//; s/[" ]//g')
           if [ "$BUILD_DOCKER" != "true" ]; then
             BUILD_DOCKER="false"
           fi
           echo "build-docker=$BUILD_DOCKER" >> $GITHUB_OUTPUT
           echo "Build Docker: $BUILD_DOCKER"
+
+          # Extract run_tests (true/false, default: true)
+          RUN_TESTS=$(grep -E "^run_tests\s*=" pyproject.toml | head -1 | sed 's/.*=\s*//; s/[" ]//g')
+          if [ "$RUN_TESTS" != "false" ]; then
+            RUN_TESTS="true"
+          fi
+          echo "run-tests=$RUN_TESTS" >> $GITHUB_OUTPUT
+          echo "Run Tests: $RUN_TESTS"
 
           # Extract edition (enterprise/community)
           ODOO_EDITION=$(grep -E "^edition\s*=" pyproject.toml | head -1 | sed 's/.*=\s*//; s/[" ]//g')
@@ -111,27 +134,100 @@ jobs:
       - name: Determine deploy mode
         id: mode
         run: |
-          # Deploy only on push to deploy branch AND if build_docker is true
-          IS_DEPLOY_BRANCH="${{ github.ref == format('refs/heads/{0}', inputs.deploy-branch) }}"
-          IS_PUSH="${{ github.event_name == 'push' }}"
+          # Get config values
+          RUN_TESTS="${{ steps.config.outputs.run-tests }}"
           BUILD_DOCKER="${{ steps.config.outputs.build-docker }}"
+          IS_PUSH="${{ github.event_name == 'push' }}"
+          CURRENT_BRANCH="${{ github.ref_name }}"
+          DEPLOY_BRANCHES="${{ inputs.deploy-branches }}"
 
-          if [ "$IS_PUSH" == "true" ] && [ "$IS_DEPLOY_BRANCH" == "true" ] && [ "$BUILD_DOCKER" == "true" ]; then
-            echo "deploy=true" >> $GITHUB_OUTPUT
-            echo "mode=Unit Tests + Docker Build" >> $GITHUB_OUTPUT
-          else
-            echo "deploy=false" >> $GITHUB_OUTPUT
-            echo "mode=Unit Tests Only" >> $GITHUB_OUTPUT
-          fi
+          # Check if current branch is in deploy-branches list
+          IS_DEPLOY_BRANCH="false"
+          IFS=',' read -ra BRANCHES <<< "$DEPLOY_BRANCHES"
+          for branch in "${BRANCHES[@]}"; do
+            branch=$(echo "$branch" | xargs)  # trim whitespace
+            if [ "$CURRENT_BRANCH" == "$branch" ]; then
+              IS_DEPLOY_BRANCH="true"
+              break
+            fi
+          done
 
           echo "Event: ${{ github.event_name }}"
-          echo "Branch: ${{ github.ref_name }}"
-          echo "Deploy branch: ${{ inputs.deploy-branch }}"
-          echo "Build Docker enabled: $BUILD_DOCKER"
-          echo "Will deploy: $(cat $GITHUB_OUTPUT | grep deploy= | cut -d= -f2)"
+          echo "Current Branch: $CURRENT_BRANCH"
+          echo "Deploy Branches: $DEPLOY_BRANCHES"
+          echo "Is Deploy Branch: $IS_DEPLOY_BRANCH"
+          echo "Run Tests: $RUN_TESTS"
+          echo "Build Docker: $BUILD_DOCKER"
+
+          # Skip Jenkins entirely if nothing to do
+          if [ "$RUN_TESTS" == "false" ] && [ "$BUILD_DOCKER" == "false" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "deploy=false" >> $GITHUB_OUTPUT
+            echo "mode=Skipped (no tests, no deploy configured)" >> $GITHUB_OUTPUT
+            echo "::notice::Skipping Jenkins - both run_tests and build_docker are false"
+            exit 0
+          fi
+
+          # PRs never deploy, only run tests (if enabled)
+          if [ "$IS_PUSH" != "true" ]; then
+            if [ "$RUN_TESTS" == "true" ]; then
+              echo "skip=false" >> $GITHUB_OUTPUT
+              echo "deploy=false" >> $GITHUB_OUTPUT
+              echo "mode=Unit Tests Only" >> $GITHUB_OUTPUT
+            else
+              echo "skip=true" >> $GITHUB_OUTPUT
+              echo "deploy=false" >> $GITHUB_OUTPUT
+              echo "mode=Skipped (run_tests=false for PR)" >> $GITHUB_OUTPUT
+            fi
+            exit 0
+          fi
+
+          # Push events - determine mode based on branch and flags
+          DEPLOY="false"
+          if [ "$IS_DEPLOY_BRANCH" == "true" ] && [ "$BUILD_DOCKER" == "true" ]; then
+            DEPLOY="true"
+          fi
+
+          # Determine final mode
+          if [ "$RUN_TESTS" == "true" ] && [ "$DEPLOY" == "true" ]; then
+            MODE="Unit Tests + Docker Build"
+          elif [ "$RUN_TESTS" == "true" ]; then
+            MODE="Unit Tests Only"
+          elif [ "$DEPLOY" == "true" ]; then
+            MODE="Docker Build Only"
+          else
+            # Non-deploy branch with run_tests=false
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "deploy=false" >> $GITHUB_OUTPUT
+            echo "mode=Skipped (run_tests=false, not a deploy branch)" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "skip=false" >> $GITHUB_OUTPUT
+          echo "deploy=$DEPLOY" >> $GITHUB_OUTPUT
+          echo "mode=$MODE" >> $GITHUB_OUTPUT
+          echo "Will deploy: $DEPLOY"
+          echo "Mode: $MODE"
+
+      - name: Skip Jenkins (nothing to do)
+        if: steps.mode.outputs.skip == 'true'
+        run: |
+          echo "## Jenkins Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Reason:** ${{ steps.mode.outputs.mode }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration from pyproject.toml" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Run Tests | \`${{ steps.config.outputs.run-tests }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Docker | \`${{ steps.config.outputs.build-docker }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo ":information_source: No Jenkins job was triggered." >> $GITHUB_STEP_SUMMARY
 
       - name: Validate Jenkins configuration
         id: validate
+        if: steps.mode.outputs.skip != 'true'
         run: |
           if [ -z "${{ secrets.JENKINS_URL }}" ]; then
             echo "::warning::JENKINS_URL not configured - running in dry-run mode"
@@ -144,7 +240,7 @@ jobs:
           fi
 
       - name: Log Jenkins trigger (dry-run)
-        if: steps.validate.outputs.dry-run == 'true'
+        if: steps.mode.outputs.skip != 'true' && steps.validate.outputs.dry-run == 'true'
         run: |
           echo "## Jenkins Trigger (Dry Run)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -155,6 +251,7 @@ jobs:
           echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Odoo Version | \`${{ steps.config.outputs.odoo-version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Run Tests | \`${{ steps.config.outputs.run-tests }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Build Docker | \`${{ steps.config.outputs.build-docker }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Edition | \`${{ steps.config.outputs.odoo-edition }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -166,6 +263,7 @@ jobs:
           echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Deploy | \`${{ steps.mode.outputs.deploy }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy Branches | \`${{ inputs.deploy-branches }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo ":information_source: Dry-run mode - Jenkins was not triggered." >> $GITHUB_STEP_SUMMARY
 
@@ -173,13 +271,14 @@ jobs:
 
       - name: Trigger Jenkins
         id: trigger
-        if: steps.validate.outputs.dry-run == 'false'
+        if: steps.mode.outputs.skip != 'true' && steps.validate.outputs.dry-run == 'false'
         run: |
           echo "Triggering Jenkins: ${{ steps.mode.outputs.mode }}"
           echo "  Repository: ${{ github.repository }}"
           echo "  Branch: ${{ github.ref_name }}"
           echo "  Commit: ${{ github.sha }}"
           echo "  Deploy: ${{ steps.mode.outputs.deploy }}"
+          echo "  Run Tests: ${{ steps.config.outputs.run-tests }}"
 
           RESPONSE=$(curl -s -w "\n%{http_code}" \
             -X POST "${{ secrets.JENKINS_URL }}/generic-webhook-trigger/invoke" \
@@ -194,7 +293,7 @@ jobs:
               "git_hosts": "${{ steps.config.outputs.git-hosts }}",
               "deploy": ${{ steps.mode.outputs.deploy }},
               "build_docker": ${{ steps.config.outputs.build-docker }},
-              "run_tests": true,
+              "run_tests": ${{ steps.config.outputs.run-tests }},
               "github_run_id": "${{ github.run_id }}",
               "github_run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
               "event": "${{ github.event_name }}",
@@ -221,6 +320,7 @@ jobs:
           echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Odoo Version | \`${{ steps.config.outputs.odoo-version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Run Tests | \`${{ steps.config.outputs.run-tests }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Build Docker | \`${{ steps.config.outputs.build-docker }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Edition | \`${{ steps.config.outputs.odoo-edition }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
