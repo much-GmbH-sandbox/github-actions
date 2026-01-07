@@ -40,6 +40,8 @@ github-actions/
 ├── dev-requirements/
 │   ├── base.txt                  # Common tools (black, flake8, radon, bandit)
 │   └── odoo{14-18}.txt           # Version-specific pylint-odoo
+├── templates/
+│   └── .pre-commit-config.yaml   # Pre-commit hooks template
 └── docs/
     └── SETUP.md                  # This file
 ```
@@ -118,6 +120,49 @@ jobs:
 
 ---
 
+## Pre-commit Hooks (Local Development)
+
+Pre-commit runs the same checks locally before each commit, catching issues early.
+
+### Setup (Per Developer)
+
+```bash
+# Install pre-commit
+pip install pre-commit
+
+# Copy config to your repo (from templates/.pre-commit-config.yaml)
+# Then install hooks
+pre-commit install
+```
+
+### Usage
+
+```bash
+# Runs automatically on git commit (only on staged files)
+git commit -m "my changes"
+
+# Run manually on all files
+pre-commit run --all-files
+
+# Skip hooks temporarily (not recommended)
+git commit --no-verify -m "emergency fix"
+```
+
+### What It Checks
+
+| Hook | Purpose |
+|------|---------|
+| Black | Auto-formats code |
+| Flake8 | Linting errors |
+| Bandit | Security issues |
+| trailing-whitespace | Removes trailing spaces |
+| end-of-file-fixer | Ensures newline at EOF |
+| check-yaml | Validates YAML syntax |
+| check-merge-conflict | Catches unresolved conflicts |
+| debug-statements | Finds leftover pdb/breakpoint |
+
+---
+
 ## Quick Start Checklist
 
 ### One-Time Setup (Organization)
@@ -131,6 +176,7 @@ jobs:
 - [ ] Create `.github/workflows/ci.yml`
 - [ ] Set correct `odoo-version`
 - [ ] Adjust branch triggers as needed
+- [ ] Copy `.pre-commit-config.yaml` from templates
 - [ ] (Optional) Enable `strict-mode` for blocking checks
 
 ---
