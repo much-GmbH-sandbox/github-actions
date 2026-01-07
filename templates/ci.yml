@@ -1,13 +1,20 @@
 # CI/CD Pipeline for Odoo Addons
-# - Quality checks run on all pushes and PRs
-# - Unit tests run on all pushes and PRs (via Jenkins)
-# - Docker build + deploy only on push to main (via Jenkins)
+#
+# Reads configuration from pyproject.toml:
+#   [odoo]
+#   version = 17.0
+#   build_docker = true
+#   edition = "enterprise"
+#
+# Flow:
+#   PR: Quality Checks → Jenkins (Unit Tests)
+#   Push to main: Quality Checks → Jenkins (Unit Tests + Docker Build)
 
 name: CI/CD
 
 on:
   push:
-    branches: [main]  # Adjust to your deploy branches
+    branches: [main]  # Deploy branch - adjust if needed
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -27,7 +34,7 @@ jobs:
   quality:
     uses: YOUR_ORG/github-actions/.github/workflows/odoo-quality.yml@main
     with:
-      odoo-version: '17'      # Change to your Odoo version: 14, 15, 16, 17, 18
+      odoo-version: '17'      # Must match pyproject.toml [odoo] version
       python-version: '3.10'
       # skip-sonar: true      # Uncomment to skip SonarQube
       # strict-mode: true     # Uncomment to fail on quality issues
@@ -36,11 +43,14 @@ jobs:
   # ============================================
   # Stage 2: Unit Tests + Deploy (Jenkins)
   # ============================================
+  # Reads pyproject.toml automatically for:
+  #   - odoo version
+  #   - build_docker (true/false)
+  #   - edition (enterprise/community)
   jenkins:
-    needs: quality  # Only run after quality checks pass
+    needs: quality
     uses: YOUR_ORG/github-actions/.github/workflows/jenkins-trigger.yml@main
     with:
-      odoo-version: '17'      # Should match quality job
-      deploy: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      # dry-run: true         # Uncomment for testing without triggering Jenkins
+      deploy-branch: 'main'   # Branch that triggers Docker build
+      # dry-run: true         # Uncomment for testing
     secrets: inherit

@@ -93,12 +93,12 @@ jobs:
     secrets: inherit
 
   # Stage 2: Unit Tests + Deploy (Jenkins)
+  # Reads pyproject.toml for odoo version, build_docker, edition
   jenkins:
     needs: quality
     uses: YOUR_ORG/github-actions/.github/workflows/jenkins-trigger.yml@main
     with:
-      odoo-version: '17'
-      deploy: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      deploy-branch: 'main'
     secrets: inherit
 ```
 
@@ -117,9 +117,22 @@ jobs:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `deploy` | Yes | - | `true` for Docker build, `false` for tests only |
-| `odoo-version` | No | 17 | Odoo version for Jenkins |
+| `deploy-branch` | No | main | Branch that triggers Docker deploy |
 | `dry-run` | No | false | Log without triggering Jenkins |
+
+**Note:** Jenkins workflow reads `pyproject.toml` automatically for Odoo version, edition, and `build_docker` flag.
+
+### pyproject.toml Configuration
+
+Each repo must have a `pyproject.toml` with an `[odoo]` section:
+
+```toml
+[odoo]
+version = 17.0           # Odoo version (required)
+build_docker = true      # Enable Docker build on deploy (default: false)
+edition = "enterprise"   # enterprise or community (default: enterprise)
+git_hosts = ""           # Extra git hosts for Docker build (optional)
+```
 
 ### What Happens
 
@@ -127,13 +140,13 @@ jobs:
 PR opened/updated:
   └─▶ Quality Checks (GHA) ─▶ Unit Tests (Jenkins)
 
-Push to main / PR merged:
+Push to main / PR merged (if build_docker = true):
   └─▶ Quality Checks (GHA) ─▶ Unit Tests + Docker Build (Jenkins)
 ```
 
 1. **Quality Checks**: Black, Flake8, Pylint-Odoo, Radon, Bandit, SonarQube
 2. **PR Comment**: Summary table posted showing pass/fail per tool
-3. **Jenkins Trigger**: Calls Jenkins for unit tests (always) and deploy (on push to main)
+3. **Jenkins Trigger**: Reads `pyproject.toml`, triggers tests (always) and deploy (if `build_docker = true` on push to deploy branch)
 
 ---
 

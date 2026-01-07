@@ -1,34 +1,25 @@
 # Jenkins Trigger - Reusable Workflow
 # Triggers Jenkins jobs for unit tests and/or Docker builds
 #
+# Reads pyproject.toml from the repo to determine:
+#   - Odoo version
+#   - Whether to build Docker (build_docker = true)
+#   - Odoo edition (enterprise/community)
+#
 # Usage:
-#   - On PR: trigger with deploy=false (unit tests only)
-#   - On push to main: trigger with deploy=true (unit tests + Docker build)
+#   - On PR: triggers unit tests only
+#   - On push to main: triggers unit tests + Docker build (if build_docker = true)
 
 name: Trigger Jenkins
 
 on:
   workflow_call:
     inputs:
-      deploy:
-        description: 'Run Docker build and push (true for push to main, false for PRs)'
-        required: true
-        type: boolean
-      odoo-version:
-        description: 'Odoo version for the build'
+      deploy-branch:
+        description: 'Branch that triggers deploy (default: main)'
         required: false
         type: string
-        default: '17'
-      branch:
-        description: 'Branch name'
-        required: false
-        type: string
-        default: ${{ github.ref_name }}
-      commit:
-        description: 'Commit SHA'
-        required: false
-        type: string
-        default: ${{ github.sha }}
+        default: 'main'
       dry-run:
         description: 'If true, log but do not trigger Jenkins'
         required: false
@@ -45,15 +36,100 @@ on:
       triggered:
         description: 'Whether Jenkins was triggered'
         value: ${{ jobs.trigger.outputs.triggered }}
+      odoo-version:
+        description: 'Odoo version from pyproject.toml'
+        value: ${{ jobs.trigger.outputs.odoo-version }}
+      build-docker:
+        description: 'Whether Docker build is enabled'
+        value: ${{ jobs.trigger.outputs.build-docker }}
 
 jobs:
   trigger:
-    name: "Jenkins: ${{ inputs.deploy && 'Tests + Deploy' || 'Tests Only' }}"
+    name: Jenkins
     runs-on: ubuntu-latest
     outputs:
       triggered: ${{ steps.trigger.outputs.triggered }}
+      odoo-version: ${{ steps.config.outputs.odoo-version }}
+      build-docker: ${{ steps.config.outputs.build-docker }}
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            pyproject.toml
+          sparse-checkout-cone-mode: false
+
+      - name: Read pyproject.toml
+        id: config
+        run: |
+          echo "::group::Reading pyproject.toml"
+
+          if [ ! -f pyproject.toml ]; then
+            echo "::warning::pyproject.toml not found - using defaults"
+            echo "odoo-version=17" >> $GITHUB_OUTPUT
+            echo "build-docker=false" >> $GITHUB_OUTPUT
+            echo "odoo-edition=enterprise" >> $GITHUB_OUTPUT
+            echo "git-hosts=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Parse [odoo] section from pyproject.toml
+          # Using grep/sed for simplicity (no external dependencies)
+
+          # Extract odoo.version (e.g., 17.0 -> 17)
+          ODOO_VERSION=$(grep -E "^version\s*=" pyproject.toml | head -1 | sed 's/.*=\s*//; s/[" ]//g; s/\.0$//')
+          if [ -z "$ODOO_VERSION" ]; then
+            ODOO_VERSION="17"
+          fi
+          echo "odoo-version=$ODOO_VERSION" >> $GITHUB_OUTPUT
+          echo "Odoo Version: $ODOO_VERSION"
+
+          # Extract build_docker (true/false)
+          BUILD_DOCKER=$(grep -E "^build_docker\s*=" pyproject.toml | head -1 | sed 's/.*=\s*//; s/[" ]//g')
+          if [ "$BUILD_DOCKER" != "true" ]; then
+            BUILD_DOCKER="false"
+          fi
+          echo "build-docker=$BUILD_DOCKER" >> $GITHUB_OUTPUT
+          echo "Build Docker: $BUILD_DOCKER"
+
+          # Extract edition (enterprise/community)
+          ODOO_EDITION=$(grep -E "^edition\s*=" pyproject.toml | head -1 | sed 's/.*=\s*//; s/[" ]//g')
+          if [ -z "$ODOO_EDITION" ]; then
+            ODOO_EDITION="enterprise"
+          fi
+          echo "odoo-edition=$ODOO_EDITION" >> $GITHUB_OUTPUT
+          echo "Odoo Edition: $ODOO_EDITION"
+
+          # Extract git_hosts (optional)
+          GIT_HOSTS=$(grep -E "^git_hosts\s*=" pyproject.toml | head -1 | sed 's/.*=\s*//; s/[" ]//g')
+          echo "git-hosts=$GIT_HOSTS" >> $GITHUB_OUTPUT
+          echo "Git Hosts: $GIT_HOSTS"
+
+          echo "::endgroup::"
+
+      - name: Determine deploy mode
+        id: mode
+        run: |
+          # Deploy only on push to deploy branch AND if build_docker is true
+          IS_DEPLOY_BRANCH="${{ github.ref == format('refs/heads/{0}', inputs.deploy-branch) }}"
+          IS_PUSH="${{ github.event_name == 'push' }}"
+          BUILD_DOCKER="${{ steps.config.outputs.build-docker }}"
+
+          if [ "$IS_PUSH" == "true" ] && [ "$IS_DEPLOY_BRANCH" == "true" ] && [ "$BUILD_DOCKER" == "true" ]; then
+            echo "deploy=true" >> $GITHUB_OUTPUT
+            echo "mode=Unit Tests + Docker Build" >> $GITHUB_OUTPUT
+          else
+            echo "deploy=false" >> $GITHUB_OUTPUT
+            echo "mode=Unit Tests Only" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Event: ${{ github.event_name }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Deploy branch: ${{ inputs.deploy-branch }}"
+          echo "Build Docker enabled: $BUILD_DOCKER"
+          echo "Will deploy: $(cat $GITHUB_OUTPUT | grep deploy= | cut -d= -f2)"
+
       - name: Validate Jenkins configuration
         id: validate
         run: |
@@ -70,46 +146,54 @@ jobs:
       - name: Log Jenkins trigger (dry-run)
         if: steps.validate.outputs.dry-run == 'true'
         run: |
-          MODE="${{ inputs.deploy && 'Unit Tests + Docker Build' || 'Unit Tests Only' }}"
-
           echo "## Jenkins Trigger (Dry Run)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Mode:** $MODE" >> $GITHUB_STEP_SUMMARY
+          echo "**Mode:** ${{ steps.mode.outputs.mode }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Would trigger with:**" >> $GITHUB_STEP_SUMMARY
-          echo "- Repository: \`${{ github.repository }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Branch: \`${{ inputs.branch }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Commit: \`${{ inputs.commit }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Odoo Version: \`${{ inputs.odoo-version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Deploy: \`${{ inputs.deploy }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration from pyproject.toml" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Odoo Version | \`${{ steps.config.outputs.odoo-version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Docker | \`${{ steps.config.outputs.build-docker }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Edition | \`${{ steps.config.outputs.odoo-edition }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Trigger Parameters" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository | \`${{ github.repository }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy | \`${{ steps.mode.outputs.deploy }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo ":information_source: Dry-run mode - Jenkins was not triggered." >> $GITHUB_STEP_SUMMARY
 
-          echo "::notice::Dry-run: Would trigger Jenkins ($MODE) for ${{ github.repository }}@${{ inputs.branch }}"
+          echo "::notice::Dry-run: Would trigger Jenkins (${{ steps.mode.outputs.mode }}) for ${{ github.repository }}@${{ github.ref_name }}"
 
       - name: Trigger Jenkins
         id: trigger
         if: steps.validate.outputs.dry-run == 'false'
         run: |
-          MODE="${{ inputs.deploy && 'Unit Tests + Docker Build' || 'Unit Tests Only' }}"
-          echo "Triggering Jenkins: $MODE"
+          echo "Triggering Jenkins: ${{ steps.mode.outputs.mode }}"
           echo "  Repository: ${{ github.repository }}"
-          echo "  Branch: ${{ inputs.branch }}"
-          echo "  Commit: ${{ inputs.commit }}"
-          echo "  Deploy: ${{ inputs.deploy }}"
+          echo "  Branch: ${{ github.ref_name }}"
+          echo "  Commit: ${{ github.sha }}"
+          echo "  Deploy: ${{ steps.mode.outputs.deploy }}"
 
-          # Determine Jenkins job endpoint
-          # Uses generic webhook trigger plugin for flexibility
           RESPONSE=$(curl -s -w "\n%{http_code}" \
             -X POST "${{ secrets.JENKINS_URL }}/generic-webhook-trigger/invoke" \
             -H "Content-Type: application/json" \
             -H "Authorization: Basic $(echo -n '${{ secrets.JENKINS_USER }}:${{ secrets.JENKINS_TOKEN }}' | base64)" \
             -d '{
               "repository": "${{ github.repository }}",
-              "branch": "${{ inputs.branch }}",
-              "commit": "${{ inputs.commit }}",
-              "odoo_version": "${{ inputs.odoo-version }}",
-              "deploy": ${{ inputs.deploy }},
+              "branch": "${{ github.ref_name }}",
+              "commit": "${{ github.sha }}",
+              "odoo_version": "${{ steps.config.outputs.odoo-version }}",
+              "odoo_edition": "${{ steps.config.outputs.odoo-edition }}",
+              "git_hosts": "${{ steps.config.outputs.git-hosts }}",
+              "deploy": ${{ steps.mode.outputs.deploy }},
+              "build_docker": ${{ steps.config.outputs.build-docker }},
               "run_tests": true,
               "github_run_id": "${{ github.run_id }}",
               "github_run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
@@ -130,16 +214,25 @@ jobs:
 
           echo "## Jenkins Triggered" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Mode:** $MODE" >> $GITHUB_STEP_SUMMARY
+          echo "**Mode:** ${{ steps.mode.outputs.mode }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration from pyproject.toml" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Odoo Version | \`${{ steps.config.outputs.odoo-version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Docker | \`${{ steps.config.outputs.build-docker }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Edition | \`${{ steps.config.outputs.odoo-edition }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Trigger Parameters" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Repository | \`${{ github.repository }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | \`${{ inputs.branch }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | \`${{ inputs.commit }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Odoo Version | \`${{ inputs.odoo-version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Deploy | \`${{ inputs.deploy }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy | \`${{ steps.mode.outputs.deploy }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo ":rocket: Jenkins job started!" >> $GITHUB_STEP_SUMMARY
 
-          echo "::notice::Jenkins triggered ($MODE) for ${{ github.repository }}@${{ inputs.branch }}"
+          echo "::notice::Jenkins triggered (${{ steps.mode.outputs.mode }}) for ${{ github.repository }}@${{ github.ref_name }}"
