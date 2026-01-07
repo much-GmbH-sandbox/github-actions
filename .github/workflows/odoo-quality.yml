@@ -64,20 +64,40 @@ jobs:
             ${{ runner.os }}-pip-${{ inputs.odoo-version }}-
             ${{ runner.os }}-pip-
 
+      - name: Download configs from central repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::group::Downloading configs from github-actions repo"
+          # Function to download file from private repo via GitHub API
+          download_file() {
+            local file_path=$1
+            local output_path=$2
+            echo "Downloading $file_path..."
+            curl -sL -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github.v3.raw" \
+              "https://api.github.com/repos/${{ github.repository_owner }}/github-actions/contents/$file_path" \
+              -o "$output_path"
+          }
+
+          # Download requirements
+          download_file "dev-requirements/base.txt" "/tmp/base.txt"
+          download_file "dev-requirements/odoo${{ inputs.odoo-version }}.txt" "/tmp/odoo.txt"
+
+          # Download configs
+          download_file "configs/.flake8" "/tmp/.flake8"
+          download_file "configs/.bandit" "/tmp/.bandit"
+          download_file "configs/.pylintrc-odoo${{ inputs.odoo-version }}" "/tmp/.pylintrc"
+
+          echo "Downloaded files:"
+          ls -la /tmp/*.txt /tmp/.flake8 /tmp/.bandit /tmp/.pylintrc
+          echo "::endgroup::"
+
       - name: Install quality tools
         run: |
           echo "::group::Installing quality tools"
-          # Download centralized requirements from this repo
-          BASE_URL="https://raw.githubusercontent.com/${{ github.repository_owner }}/github-actions/main"
-
-          echo "Downloading base requirements..."
-          curl -sL "$BASE_URL/dev-requirements/base.txt" -o /tmp/base.txt
           cat /tmp/base.txt
-
-          echo "Downloading Odoo ${{ inputs.odoo-version }} requirements..."
-          curl -sL "$BASE_URL/dev-requirements/odoo${{ inputs.odoo-version }}.txt" -o /tmp/odoo.txt
           cat /tmp/odoo.txt
-
           pip install -q -r /tmp/base.txt -r /tmp/odoo.txt
           echo "::endgroup::"
 
@@ -100,10 +120,6 @@ jobs:
         continue-on-error: true
         run: |
           echo "::group::Flake8 Check"
-          # Download centralized config
-          BASE_URL="https://raw.githubusercontent.com/${{ github.repository_owner }}/github-actions/main"
-          curl -sL "$BASE_URL/configs/.flake8" -o /tmp/.flake8
-
           if python -m flake8 . --config=/tmp/.flake8; then
             echo "result=pass" >> $GITHUB_OUTPUT
             echo "Flake8: No issues found"
@@ -126,10 +142,6 @@ jobs:
             echo "result=skip" >> $GITHUB_OUTPUT
           else
             echo "Found modules: $MODULES"
-
-            # Download version-specific pylintrc
-            BASE_URL="https://raw.githubusercontent.com/${{ github.repository_owner }}/github-actions/main"
-            curl -sL "$BASE_URL/configs/.pylintrc-odoo${{ inputs.odoo-version }}" -o /tmp/.pylintrc
 
             if python -m pylint $MODULES --rcfile=/tmp/.pylintrc --output-format=colorized; then
               echo "result=pass" >> $GITHUB_OUTPUT
@@ -166,10 +178,6 @@ jobs:
         continue-on-error: true
         run: |
           echo "::group::Bandit Security Check"
-          # Download centralized config
-          BASE_URL="https://raw.githubusercontent.com/${{ github.repository_owner }}/github-actions/main"
-          curl -sL "$BASE_URL/configs/.bandit" -o /tmp/.bandit
-
           if python -m bandit -r . -c /tmp/.bandit -f custom \
             --msg-template "{relpath}:{line}: [{severity}] {test_id}: {msg}"; then
             echo "result=pass" >> $GITHUB_OUTPUT
