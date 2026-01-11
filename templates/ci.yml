@@ -4,13 +4,12 @@
 #   [odoo]
 #   version = 17.0
 #   build_docker = true    # Enable Docker build on deploy branches
-#   fast_tests = true       # Enable unit tests (default: true)
 #   edition = "enterprise"
 #
 # Flow:
-#   PR: Quality Checks → Jenkins (Unit Tests only, if fast_tests=true)
-#   Push to deploy branch: Quality Checks → Jenkins (Tests and/or Deploy based on flags)
-#   Push to non-deploy branch: Quality Checks → Jenkins (Tests only, if fast_tests=true)
+#   PR: Quality Checks → Jenkins (Unit Tests)
+#   Push to deploy branch: Quality Checks → Jenkins (Tests + Deploy if build_docker=true)
+#   Push to non-deploy branch: Quality Checks → Jenkins (Tests only)
 
 name: CI/CD
 
@@ -47,11 +46,10 @@ jobs:
   # ============================================
   # Reads pyproject.toml automatically for:
   #   - odoo version
-  #   - fast_tests (true/false) - controls unit test execution
   #   - build_docker (true/false) - controls Docker build on deploy branches
   #   - edition (enterprise/community)
   #
-  # Skips Jenkins entirely if both fast_tests=false AND build_docker=false
+  # Tests always run. Deploy only on push to deploy-branches with build_docker=true.
   jenkins:
     needs: quality
     uses: YOUR_ORG/github-actions/.github/workflows/jenkins-trigger.yml@main

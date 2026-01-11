@@ -93,8 +93,7 @@ jobs:
     secrets: inherit
 
   # Stage 2: Unit Tests + Deploy (Jenkins)
-  # Reads pyproject.toml for fast_tests, build_docker, edition
-  # Skips Jenkins if both fast_tests=false AND build_docker=false
+  # Tests always run; deploy on push to deploy-branches with build_docker=true
   jenkins:
     needs: quality
     uses: YOUR_ORG/github-actions/.github/workflows/jenkins-trigger.yml@main
@@ -122,11 +121,10 @@ jobs:
 | `dry-run` | No | false | Log without triggering Jenkins |
 
 **Note:** Jenkins workflow reads `pyproject.toml` automatically for:
-- `fast_tests` - controls unit test execution (default: true)
 - `build_docker` - controls Docker build on deploy branches (default: false)
 - `version`, `edition` - Odoo configuration
 
-**Behavior:** If both `fast_tests=false` AND `build_docker=false`, Jenkins is skipped entirely.
+**Behavior:** Tests always run. Deploy (Docker build) only on push to deploy branches with `build_docker=true`.
 
 ### pyproject.toml Configuration
 
@@ -135,7 +133,6 @@ Each repo must have a `pyproject.toml` with an `[odoo]` section:
 ```toml
 [odoo]
 version = 17.0           # Odoo version (required)
-fast_tests = true         # Enable unit tests (default: true)
 build_docker = true      # Enable Docker build on deploy branches (default: false)
 edition = "enterprise"   # enterprise or community (default: enterprise)
 git_hosts = ""           # Extra git hosts for Docker build (optional)
@@ -144,7 +141,6 @@ git_hosts = ""           # Extra git hosts for Docker build (optional)
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `version` | - | Odoo version (required) |
-| `fast_tests` | true | Run unit tests via Jenkins |
 | `build_docker` | false | Build/push Docker image on deploy branches |
 | `edition` | enterprise | Odoo edition |
 | `git_hosts` | "" | Additional git hosts for Docker build |
@@ -152,28 +148,22 @@ git_hosts = ""           # Extra git hosts for Docker build (optional)
 ### What Happens
 
 ```
-PR opened/updated (fast_tests=true):
+PR opened/updated:
   └─▶ Quality Checks (GHA) ─▶ Unit Tests (Jenkins)
 
-PR opened/updated (fast_tests=false):
-  └─▶ Quality Checks (GHA) ─▶ Jenkins Skipped
-
-Push to deploy branch (fast_tests=true, build_docker=true):
+Push to deploy branch (build_docker=true):
   └─▶ Quality Checks (GHA) ─▶ Unit Tests + Docker Build (Jenkins)
 
-Push to deploy branch (fast_tests=false, build_docker=true):
-  └─▶ Quality Checks (GHA) ─▶ Docker Build Only (Jenkins)
-
-Push to non-deploy branch (fast_tests=true):
+Push to deploy branch (build_docker=false):
   └─▶ Quality Checks (GHA) ─▶ Unit Tests (Jenkins)
 
-Both fast_tests=false AND build_docker=false:
-  └─▶ Quality Checks (GHA) ─▶ Jenkins Skipped
+Push to non-deploy branch:
+  └─▶ Quality Checks (GHA) ─▶ Unit Tests (Jenkins)
 ```
 
 1. **Quality Checks**: Black, Flake8, Pylint-Odoo, Radon, Bandit, SonarQube
 2. **PR Comment**: Summary table posted showing pass/fail per tool
-3. **Jenkins Trigger**: Based on `fast_tests` and `build_docker` flags from `pyproject.toml`
+3. **Jenkins Trigger**: Tests always run; deploy based on branch + `build_docker` flag
 
 ---
 
@@ -257,7 +247,7 @@ gh secret set JENKINS_TOKEN --org YOUR_ORG --visibility all
 2. **Pipeline configured** to accept JSON payload with:
    - `repository`, `branch`, `commit`
    - `odoo_version`, `odoo_edition`, `git_hosts`
-   - `deploy`, `build_docker`, `fast_tests`
+   - `deploy`, `build_docker`
    - `github_run_id`, `github_run_url`, `event`, `pr_number`
 
 ### Payload Example
@@ -272,7 +262,6 @@ gh secret set JENKINS_TOKEN --org YOUR_ORG --visibility all
   "git_hosts": "",
   "deploy": true,
   "build_docker": true,
-  "fast_tests": true,
   "github_run_id": "123456",
   "github_run_url": "https://github.com/...",
   "event": "push",
