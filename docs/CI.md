@@ -68,6 +68,22 @@ github-actions/
 | `SONAR_TOKEN` | For SonarQube | Authentication to SonarQube server |
 | `SONAR_HOST_URL` | For SonarQube | Your SonarQube server URL |
 
+### CONFIG_TOKEN Setup
+
+If the `github-actions` repo is **private**, each organization needs a PAT to access configs:
+
+1. Go to https://github.com/settings/tokens/new
+2. Set:
+   - **Note**: `github-actions-config-reader`
+   - **Expiration**: 90 days (or longer)
+   - **Scopes**: `repo` only
+3. Create organization secret:
+   ```bash
+   gh secret set CONFIG_TOKEN --org YOUR_ORG --visibility all
+   ```
+
+See [SETUP.md](SETUP.md) for full setup instructions.
+
 ## Example PR Comment Output
 
 ```
