@@ -13,11 +13,16 @@
 # Usage:
 #   - On PR: triggers unit tests
 #   - On push to deploy branch: triggers tests + deploy (if build_docker=true)
+#
+# Note: Concurrency should be set in the calling workflow, not here.
+# This allows the caller to define the concurrency group based on their context.
 
 name: Trigger Jenkins
 
 on:
   workflow_call:
+    # Note: Concurrency should be set in the calling workflow, not here
+    # This allows the caller to define the concurrency group based on their context
     inputs:
       deploy-branches:
         description: 'Branches that trigger deploy (comma-separated, e.g., "main,production")'

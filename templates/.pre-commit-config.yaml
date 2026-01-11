@@ -2,6 +2,14 @@
 # Install: pip install pre-commit && pre-commit install
 # Run manually: pre-commit run --all-files
 
+# pre-commit.ci configuration (https://pre-commit.ci)
+# Automatically fixes formatting issues on PRs
+ci:
+  autofix_commit_msg: "style: auto-format with pre-commit.ci [skip ci]"
+  autofix_prs: true
+  autoupdate_schedule: monthly
+  autoupdate_commit_msg: "chore: update pre-commit hooks"
+
 repos:
   # Black - Code formatting
   - repo: https://github.com/psf/black

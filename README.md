@@ -22,11 +22,13 @@ concurrency:
 
 jobs:
   quality:
-    uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@main
+    uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@v1
     with:
       odoo-version: '17'  # Change to your Odoo version
     secrets: inherit
 ```
+
+**Recommended**: Also add the [pre-commit.ci](https://pre-commit.ci) configuration to your `.pre-commit-config.yaml` for automatic formatting fixes on PRs. See the `templates/.pre-commit-config.yaml` file for a complete example.
 
 ## Workflows
 
@@ -37,12 +39,13 @@ Consolidated quality checks running all tools in a single job (cost-optimized).
 **Tools included**:
 | Tool | Purpose |
 |------|---------|
+| Dependencies | Check for unreleased dependencies (git-based URLs) |
 | Black | Code formatting |
 | Flake8 | Python linting |
 | Pylint-Odoo | Odoo-specific linting |
 | Radon | Cyclomatic complexity |
 | Bandit | Security scanning |
-| SonarQube | Code quality analysis |
+| SonarQube | Code quality analysis (optional) |
 
 **Inputs**:
 | Input | Required | Default | Description |
@@ -60,7 +63,7 @@ Consolidated quality checks running all tools in a single job (cost-optimized).
 ```yaml
 jobs:
   quality:
-    uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@main
+    uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@v1
     with:
       odoo-version: '17'
       python-version: '3.10'
@@ -91,9 +94,9 @@ jobs:
   deploy:
     needs: quality
     if: github.ref == 'refs/heads/main'
-    uses: much-GmbH-sandbox/github-actions/.github/workflows/jenkins-trigger.yml@main
+    uses: much-GmbH-sandbox/github-actions/.github/workflows/jenkins-trigger.yml@v1
     with:
-      job-name: 'odoo-docker-build'
+      deploy-branches: 'main,production'
     secrets: inherit
 ```
 
@@ -190,15 +193,41 @@ SONAR_HOST_URL=https://qa.muchconsulting.dev
 
 ## Versioning
 
-Use version tags for stability:
+Use version tags for stability. **Never use `@main` in production**.
 
 ```yaml
-# Latest (may change)
-uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@main
+# Major version (recommended) - receives backward-compatible updates
+uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@v1
 
-# Pinned version (recommended for production)
+# Exact version (most stable) - no automatic updates
 uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@v1.0.0
+
+# Latest (for testing only) - may break without notice
+uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@main
 ```
+
+**Versioning policy**:
+- `@v1` → always points to latest stable v1.x.x release
+- Breaking changes → new major version (v2, v3, etc.)
+- Bug fixes and new features → minor/patch versions (v1.1.0, v1.0.1)
+
+## Pre-commit.ci Integration
+
+For automatic formatting fixes on PRs (so developers don't have to run formatters manually):
+
+1. Sign up at [pre-commit.ci](https://pre-commit.ci) with your GitHub org
+2. Add the `ci:` section to your repo's `.pre-commit-config.yaml`:
+
+```yaml
+ci:
+  autofix_commit_msg: "style: auto-format with pre-commit.ci [skip ci]"
+  autofix_prs: true
+  autoupdate_schedule: monthly
+```
+
+See `templates/.pre-commit-config.yaml` for a complete example.
+
+**Cost**: Free for open source, $10/month for private repos (startup tier).
 
 ## Troubleshooting
 

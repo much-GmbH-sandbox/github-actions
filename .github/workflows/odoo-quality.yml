@@ -7,6 +7,8 @@ name: Odoo Quality Checks
 
 on:
   workflow_call:
+    # Note: Concurrency should be set in the calling workflow, not here
+    # This allows the caller to define the concurrency group based on their context
     inputs:
       odoo-version:
         description: 'Odoo version (14, 15, 16, 17, 18)'
@@ -116,6 +118,29 @@ jobs:
           cat /tmp/base.txt
           cat /tmp/odoo.txt
           pip install -q -r /tmp/base.txt -r /tmp/odoo.txt
+          echo "::endgroup::"
+
+      - name: Check unreleased dependencies
+        id: deps
+        continue-on-error: true
+        run: |
+          echo "::group::Unreleased Dependencies Check"
+          FOUND_UNRELEASED=false
+          for f in requirements.txt test-requirements.txt; do
+            if [ -f "$f" ]; then
+              # Check for git-based dependencies (URLs with /)
+              if grep -E "^[^#].*/" "$f" 2>/dev/null; then
+                echo "::warning::Found git-based or unreleased dependencies in $f"
+                FOUND_UNRELEASED=true
+              fi
+            fi
+          done
+          if [ "$FOUND_UNRELEASED" = "true" ]; then
+            echo "result=warn" >> $GITHUB_OUTPUT
+          else
+            echo "result=pass" >> $GITHUB_OUTPUT
+            echo "No unreleased dependencies found"
+          fi
           echo "::endgroup::"
 
       - name: Black (formatting)
@@ -247,6 +272,13 @@ jobs:
 
           ALL_PASSED=true
 
+          # Unreleased Dependencies
+          if [ "${{ steps.deps.outputs.result }}" == "pass" ]; then
+            echo "| Dependencies | :white_check_mark: All published |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Dependencies | :warning: Unreleased deps found |" >> $GITHUB_STEP_SUMMARY
+          fi
+
           # Black
           if [ "${{ steps.black.outputs.result }}" == "pass" ]; then
             echo "| Black | :white_check_mark: Passed |" >> $GITHUB_STEP_SUMMARY
@@ -314,6 +346,7 @@ jobs:
         with:
           script: |
             const results = {
+              deps: '${{ steps.deps.outputs.result }}',
               black: '${{ steps.black.outputs.result }}',
               flake8: '${{ steps.flake8.outputs.result }}',
               pylint: '${{ steps.pylint.outputs.result }}',
@@ -332,6 +365,7 @@ jobs:
 
             let body = `## Quality Check Results\n\n`;
             body += `| Tool | Status |\n|------|--------|\n`;
+            body += `| Dependencies | ${getStatus('deps', results.deps)} |\n`;
             body += `| Black (formatting) | ${getStatus('black', results.black)} |\n`;
             body += `| Flake8 (linting) | ${getStatus('flake8', results.flake8)} |\n`;
             body += `| Pylint-Odoo | ${getStatus('pylint', results.pylint)} |\n`;
