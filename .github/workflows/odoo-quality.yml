@@ -159,17 +159,23 @@ jobs:
         continue-on-error: true
         run: |
           echo "::group::Black Check"
-          if python -m black --check --diff .; then
-            echo "result=pass" >> $GITHUB_OUTPUT
-            echo "Black: All files properly formatted"
-          else
+          OUTPUT=$(python -m black --check --diff . 2>&1) || true
+          if echo "$OUTPUT" | grep -q "would reformat\|would be reformatted"; then
             echo "result=fail" >> $GITHUB_OUTPUT
+            # Extract files that need reformatting (limit to 10)
+            ERRORS=$(echo "$OUTPUT" | grep -E "^would reformat|would be reformatted" | head -10 | sed 's/^/- /')
+            if [ -z "$ERRORS" ]; then
+              ERRORS=$(echo "$OUTPUT" | grep -E "^\-\-\-|^\+\+\+" | head -10 | sed 's/^/- /')
+            fi
+            echo "errors<<EOF" >> $GITHUB_OUTPUT
+            echo "$ERRORS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
             echo "::warning::Black formatting issues found. Run 'black .' locally to fix."
-            echo ""
-            echo "To auto-fix formatting before commits, set up pre-commit hooks:"
-            echo "  pip install pre-commit && pre-commit install"
-            echo ""
-            echo "See: https://github.com/${{ github.repository_owner }}/github-actions/blob/main/.github/docs/PRE_COMMIT.md"
+            echo "$OUTPUT"
+          else
+            echo "result=pass" >> $GITHUB_OUTPUT
+            echo "errors=" >> $GITHUB_OUTPUT
+            echo "Black: All files properly formatted"
           fi
           echo "::endgroup::"
 
@@ -178,12 +184,20 @@ jobs:
         continue-on-error: true
         run: |
           echo "::group::Flake8 Check"
-          if python -m flake8 . --config=.flake8; then
-            echo "result=pass" >> $GITHUB_OUTPUT
-            echo "Flake8: No issues found"
-          else
+          OUTPUT=$(python -m flake8 . --config=.flake8 2>&1) || true
+          if [ -n "$OUTPUT" ]; then
             echo "result=fail" >> $GITHUB_OUTPUT
+            # Limit to first 10 errors
+            ERRORS=$(echo "$OUTPUT" | head -10 | sed 's/^/- `/' | sed 's/$/`/')
+            echo "errors<<EOF" >> $GITHUB_OUTPUT
+            echo "$ERRORS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
             echo "::warning::Flake8 linting issues found"
+            echo "$OUTPUT"
+          else
+            echo "result=pass" >> $GITHUB_OUTPUT
+            echo "errors=" >> $GITHUB_OUTPUT
+            echo "Flake8: No issues found"
           fi
           echo "::endgroup::"
 
@@ -198,15 +212,24 @@ jobs:
           if [ -z "$MODULES" ]; then
             echo "No Odoo modules found (no __manifest__.py files)"
             echo "result=skip" >> $GITHUB_OUTPUT
+            echo "errors=" >> $GITHUB_OUTPUT
           else
             echo "Found modules: $MODULES"
+            OUTPUT=$(python -m pylint $MODULES --rcfile=.pylintrc --output-format=text 2>&1) || true
 
-            if python -m pylint $MODULES --rcfile=.pylintrc --output-format=colorized; then
+            if echo "$OUTPUT" | grep -qE "^Your code has been rated at 10"; then
               echo "result=pass" >> $GITHUB_OUTPUT
+              echo "errors=" >> $GITHUB_OUTPUT
               echo "Pylint-Odoo: No issues found"
             else
               echo "result=fail" >> $GITHUB_OUTPUT
+              # Extract error/warning lines (limit to 10)
+              ERRORS=$(echo "$OUTPUT" | grep -E "^[^*].*:\s*[CWERF][0-9]+" | head -10 | sed 's/^/- `/' | sed 's/$/`/')
+              echo "errors<<EOF" >> $GITHUB_OUTPUT
+              echo "$ERRORS" >> $GITHUB_OUTPUT
+              echo "EOF" >> $GITHUB_OUTPUT
               echo "::warning::Pylint-Odoo issues found"
+              echo "$OUTPUT"
             fi
           fi
           echo "::endgroup::"
@@ -216,17 +239,24 @@ jobs:
         continue-on-error: true
         run: |
           echo "::group::Radon Complexity Check"
-          python -m radon cc . -a -nc --total-average
+          OUTPUT=$(python -m radon cc . -a -nc --total-average 2>&1)
+          echo "$OUTPUT"
 
           # Check average complexity grade
-          AVG=$(python -m radon cc . -a -nc --total-average 2>/dev/null | grep "Average complexity" | grep -oE '[A-F]' | head -1)
+          AVG=$(echo "$OUTPUT" | grep "Average complexity" | grep -oE '[A-F]' | head -1)
           echo "Average complexity grade: $AVG"
 
           if [[ "$AVG" =~ ^[DE]$ ]]; then
             echo "result=warn" >> $GITHUB_OUTPUT
+            # Get high complexity functions (D, E, F grades)
+            ERRORS=$(echo "$OUTPUT" | grep -E " - [DEF] " | head -10 | sed 's/^/- `/' | sed 's/$/`/')
+            echo "errors<<EOF" >> $GITHUB_OUTPUT
+            echo "$ERRORS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
             echo "::warning::High average complexity: $AVG"
           else
             echo "result=pass" >> $GITHUB_OUTPUT
+            echo "errors=" >> $GITHUB_OUTPUT
             echo "Radon: Complexity within acceptable range"
           fi
           echo "::endgroup::"
@@ -236,13 +266,22 @@ jobs:
         continue-on-error: true
         run: |
           echo "::group::Bandit Security Check"
-          if python -m bandit -r . -c .bandit -f custom \
-            --msg-template "{relpath}:{line}: [{severity}] {test_id}: {msg}"; then
-            echo "result=pass" >> $GITHUB_OUTPUT
-            echo "Bandit: No security issues found"
-          else
+          OUTPUT=$(python -m bandit -r . -c .bandit -f custom \
+            --msg-template "{relpath}:{line}: [{severity}] {test_id}: {msg}" 2>&1) || true
+
+          if echo "$OUTPUT" | grep -qE "\[(HIGH|MEDIUM|LOW)\]"; then
             echo "result=fail" >> $GITHUB_OUTPUT
+            # Extract security issues (limit to 10)
+            ERRORS=$(echo "$OUTPUT" | grep -E "\[(HIGH|MEDIUM|LOW)\]" | head -10 | sed 's/^/- `/' | sed 's/$/`/')
+            echo "errors<<EOF" >> $GITHUB_OUTPUT
+            echo "$ERRORS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
             echo "::warning::Bandit security issues found"
+            echo "$OUTPUT"
+          else
+            echo "result=pass" >> $GITHUB_OUTPUT
+            echo "errors=" >> $GITHUB_OUTPUT
+            echo "Bandit: No security issues found"
           fi
           echo "::endgroup::"
 
@@ -370,7 +409,15 @@ jobs:
               bandit: '${{ steps.bandit.outputs.result }}'
             };
 
-            const getStatus = (tool, result) => {
+            const errors = {
+              black: `${{ steps.black.outputs.errors }}`,
+              flake8: `${{ steps.flake8.outputs.errors }}`,
+              pylint: `${{ steps.pylint.outputs.errors }}`,
+              radon: `${{ steps.radon.outputs.errors }}`,
+              bandit: `${{ steps.bandit.outputs.errors }}`
+            };
+
+            const getStatus = (tool, result, error) => {
               if (result === 'pass') return '✅ Passed';
               if (result === 'skip') return '⏭️ Skipped';
               if (result === 'warn') return '⚠️ Warning';
@@ -392,7 +439,25 @@ jobs:
               body += `### 🎉 All checks passed!`;
             } else {
               body += `### ⚠️ Some checks need attention\n\n`;
-              body += `View the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.`;
+
+              // Add error details for failed checks
+              const toolNames = {
+                black: 'Black (formatting)',
+                flake8: 'Flake8 (linting)',
+                pylint: 'Pylint-Odoo',
+                radon: 'Radon (complexity)',
+                bandit: 'Bandit (security)'
+              };
+
+              for (const [tool, error] of Object.entries(errors)) {
+                if (error && error.trim() && results[tool] !== 'pass') {
+                  body += `<details>\n<summary><b>${toolNames[tool]}</b> issues</summary>\n\n`;
+                  body += `${error.trim()}\n`;
+                  body += `</details>\n\n`;
+                }
+              }
+
+              body += `\nView the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for full details.`;
             }
 
             // Find existing comment to update
