@@ -56,6 +56,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          # For PRs: checkout the PR branch (gets latest including auto-format commits)
+          # For push: checkout the default ref
+          ref: ${{ github.head_ref || github.ref }}
           fetch-depth: 0  # Full history for SonarQube blame
 
       - name: Set up Python ${{ inputs.python-version }}
