@@ -35,11 +35,11 @@ curl -O https://raw.githubusercontent.com/much-GmbH-sandbox/base-repo/main/.pre-
 curl -O https://raw.githubusercontent.com/much-GmbH-sandbox/base-repo/main/.flake8
 curl -O https://raw.githubusercontent.com/much-GmbH-sandbox/base-repo/main/.bandit
 curl -O https://raw.githubusercontent.com/much-GmbH-sandbox/base-repo/main/.isort.cfg
+curl -O https://raw.githubusercontent.com/much-GmbH-sandbox/base-repo/main/.pylintrc
 curl -O https://raw.githubusercontent.com/much-GmbH-sandbox/base-repo/main/pyproject.toml
-
-# Pylint config (choose your Odoo version)
-curl -o .pylintrc https://raw.githubusercontent.com/much-GmbH-sandbox/base-repo/main/pylintrc/.pylintrc-odoo17
 ```
+
+The `.pylintrc` is version-agnostic - pylint-odoo handles version-specific checks at runtime.
 
 ## Manual Run
 
