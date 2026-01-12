@@ -4,9 +4,25 @@ Central repository for reusable GitHub Actions workflows for Odoo addon developm
 
 **Organization**: much-GmbH-sandbox (sandbox for testing)
 
-## Quick Start
+## Getting Started
 
-Add this workflow to your Odoo addon repository at `.github/workflows/ci.yml`:
+### New Repository (Recommended)
+
+Use [base-repo](https://github.com/much-GmbH-sandbox/base-repo) as a template:
+1. Click "Use this template" on the base-repo page
+2. Create your new repository
+3. Update `pyproject.toml` with your Odoo version
+4. Copy the appropriate `.pylintrc` for your version
+
+base-repo includes:
+- CI workflow using these centralized workflows
+- All linter configs (`.flake8`, `.bandit`, `.pylintrc`)
+- Pre-commit hooks configuration
+- Editor and Git configs
+
+### Existing Repository
+
+Add the CI workflow to `.github/workflows/ci.yml`:
 
 ```yaml
 name: CI
@@ -28,7 +44,7 @@ jobs:
     secrets: inherit
 ```
 
-**Recommended**: Set up pre-commit hooks locally to auto-fix formatting before commits. See [Pre-commit Setup Guide](.github/docs/PRE_COMMIT.md).
+Then copy config files from [base-repo](https://github.com/much-GmbH-sandbox/base-repo).
 
 ## Workflows
 
@@ -39,7 +55,7 @@ Consolidated quality checks running all tools in a single job (cost-optimized).
 **Tools included**:
 | Tool | Purpose |
 |------|---------|
-| Dependencies | Check for unreleased dependencies (git-based URLs) |
+| Dependencies | Check for unreleased dependencies |
 | Black | Code formatting |
 | Flake8 | Python linting |
 | Pylint-Odoo | Odoo-specific linting |
@@ -59,18 +75,6 @@ Consolidated quality checks running all tools in a single job (cost-optimized).
 - `SONAR_TOKEN` - SonarQube authentication token
 - `SONAR_HOST_URL` - SonarQube server URL
 
-**Example**:
-```yaml
-jobs:
-  quality:
-    uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@v1
-    with:
-      odoo-version: '17'
-      python-version: '3.10'
-      strict-mode: true
-    secrets: inherit
-```
-
 ### `jenkins-trigger.yml` - Jenkins Integration
 
 Triggers Jenkins Docker build jobs after quality checks pass.
@@ -88,18 +92,6 @@ Triggers Jenkins Docker build jobs after quality checks pass.
 - `JENKINS_USER` - Jenkins API username
 - `JENKINS_TOKEN` - Jenkins API token
 
-**Example**:
-```yaml
-jobs:
-  deploy:
-    needs: quality
-    if: github.ref == 'refs/heads/main'
-    uses: much-GmbH-sandbox/github-actions/.github/workflows/jenkins-trigger.yml@v1
-    with:
-      deploy-branches: 'main,production'
-    secrets: inherit
-```
-
 ## Repository Structure
 
 ```
@@ -110,20 +102,15 @@ github-actions/
 │   │   └── jenkins-trigger.yml   # Jenkins integration
 │   └── docs/
 │       └── PRE_COMMIT.md         # Pre-commit setup guide
-├── configs/
-│   ├── .flake8               # Flake8 configuration
-│   ├── .bandit               # Bandit security config
-│   └── .pylintrc-odoo{14-18} # Version-specific pylint
 ├── dev-requirements/
-│   ├── base.txt              # Core tools
-│   └── odoo{14-18}.txt       # Version-specific tools
-├── templates/
-│   ├── ci.yml                # Full CI/CD template
-│   └── .pre-commit-config.yaml  # Pre-commit hooks
+│   ├── base.txt                  # Core tools
+│   └── odoo{14-18}.txt           # Version-specific tools
 ├── workflow-templates/
-│   └── odoo-addon-ci.yml     # Alternative template
+│   └── odoo-addon-ci.yml         # GitHub workflow starter template
 └── README.md
 ```
+
+**Note**: Linter configs (`.flake8`, `.bandit`, `.pylintrc`) are in [base-repo](https://github.com/much-GmbH-sandbox/base-repo).
 
 ## Supported Odoo Versions
 
@@ -149,8 +136,6 @@ This saves **20-40%** on GitHub Actions minutes.
 
 ### Organization-Level (Recommended)
 
-Set secrets at the organization level for all repos:
-
 ```bash
 gh secret set SONAR_TOKEN --org much-GmbH-sandbox --visibility private
 gh secret set SONAR_HOST_URL --org much-GmbH-sandbox --visibility private
@@ -158,43 +143,8 @@ gh secret set SONAR_HOST_URL --org much-GmbH-sandbox --visibility private
 
 ### Repository-Level
 
-Or set per-repository:
-
 ```bash
 gh secret set SONAR_TOKEN -R much-GmbH-sandbox/my-addon
-gh secret set SONAR_HOST_URL -R much-GmbH-sandbox/my-addon
-```
-
-## Path Filtering
-
-Workflows skip documentation-only changes to save minutes:
-
-```yaml
-paths-ignore:
-  - '**.md'
-  - 'docs/**'
-  - 'LICENSE'
-```
-
-## Local Testing with `act`
-
-Test workflows locally before pushing:
-
-```bash
-# Install act
-brew install act
-
-# Run quality checks locally
-act push --secret-file .secrets
-
-# Dry run
-act -n push
-```
-
-Create `.secrets` file:
-```
-SONAR_TOKEN=your_token
-SONAR_HOST_URL=https://qa.muchconsulting.dev
 ```
 
 ## Versioning
@@ -202,69 +152,24 @@ SONAR_HOST_URL=https://qa.muchconsulting.dev
 Use version tags for stability. **Never use `@main` in production**.
 
 ```yaml
-# Major version (recommended) - receives backward-compatible updates
+# Major version (recommended)
 uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@v1
 
-# Exact version (most stable) - no automatic updates
+# Exact version (most stable)
 uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@v1.0.0
-
-# Latest (for testing only) - may break without notice
-uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@main
 ```
-
-**Versioning policy**:
-- `@v1` → always points to latest stable v1.x.x release
-- Breaking changes → new major version (v2, v3, etc.)
-- Bug fixes and new features → minor/patch versions (v1.1.0, v1.0.1)
 
 ## Code Formatting
 
 Format your code locally before committing using pre-commit hooks.
-
-### Quick Setup
 
 ```bash
 pip install pre-commit
 pre-commit install
 ```
 
-Hooks will now run automatically on every commit. See the [Pre-commit Setup Guide](.github/docs/PRE_COMMIT.md) for detailed instructions.
+See the [Pre-commit Setup Guide](.github/docs/PRE_COMMIT.md) or [base-repo](https://github.com/much-GmbH-sandbox/base-repo) for config files.
 
-### Fixing CI Failures
+## Related Repositories
 
-If Black fails in CI:
-
-```bash
-black .
-git add -A && git commit -m "style: fix formatting" && git push
-```
-
-## Troubleshooting
-
-### Quality checks fail but code is fine
-
-Check which tool failed in the workflow summary. Common issues:
-- **Black**: Run `black .` locally to auto-fix formatting
-- **Flake8**: Check for unused imports, line length
-- **Pylint-Odoo**: Check `__manifest__.py` format
-
-### SonarQube not running
-
-Ensure secrets are configured:
-1. `SONAR_TOKEN` must be set at org or repo level
-2. `SONAR_HOST_URL` must be accessible from GitHub runners
-
-### Workflow not triggering
-
-Check:
-1. Branch matches trigger pattern
-2. Path filters aren't excluding your changes
-3. Workflow file syntax is valid
-
-## Contributing
-
-1. Create a branch
-2. Make changes
-3. Test with `act` locally
-4. Push and verify in sandbox repos
-5. Create PR for review
+- [base-repo](https://github.com/much-GmbH-sandbox/base-repo) - Template with linter configs and CI workflow

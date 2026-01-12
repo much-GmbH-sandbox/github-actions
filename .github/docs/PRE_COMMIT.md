@@ -16,29 +16,29 @@ pre-commit install
 
 ## Required Config Files
 
-Pre-commit hooks use config files in your repo. Copy these from `base-repo` or create them:
+Pre-commit hooks use config files in your repo. Get all files from [base-repo](https://github.com/much-GmbH-sandbox/base-repo):
 
-| File | Purpose | Source |
-|------|---------|--------|
-| `.pre-commit-config.yaml` | Pre-commit hook definitions | [templates/.pre-commit-config.yaml](../../templates/.pre-commit-config.yaml) |
-| `.flake8` | Flake8 linting rules | [base-repo/.flake8](https://github.com/much-GmbH/base-repo/blob/main/.flake8) |
-| `.bandit` | Bandit security config | [base-repo/.bandit](https://github.com/much-GmbH/base-repo/blob/main/.bandit) |
-| `.pylintrc` | Pylint-Odoo config | Copy from `configs/.pylintrc-odoo{VERSION}` |
-| `pyproject.toml` | Black formatter config | [base-repo/pyproject.toml](https://github.com/much-GmbH/base-repo/blob/main/pyproject.toml) |
-| `.isort.cfg` | Import sorting config | [base-repo/.isort.cfg](https://github.com/much-GmbH/base-repo/blob/main/.isort.cfg) |
+| File | Purpose |
+|------|---------|
+| `.pre-commit-config.yaml` | Pre-commit hook definitions |
+| `.flake8` | Flake8 linting rules |
+| `.bandit` | Bandit security config |
+| `.pylintrc` | Pylint-Odoo config |
+| `pyproject.toml` | Black formatter config |
+| `.isort.cfg` | Import sorting config |
 
-### Pylint Config (Version-Specific)
-
-Copy the appropriate pylint config for your Odoo version:
+### Quick Setup
 
 ```bash
-# For Odoo 17
-curl -o .pylintrc \
-  https://raw.githubusercontent.com/much-GmbH/github-actions/main/configs/.pylintrc-odoo17
+# Copy all configs from base-repo
+curl -O https://raw.githubusercontent.com/much-GmbH-sandbox/base-repo/main/.pre-commit-config.yaml
+curl -O https://raw.githubusercontent.com/much-GmbH-sandbox/base-repo/main/.flake8
+curl -O https://raw.githubusercontent.com/much-GmbH-sandbox/base-repo/main/.bandit
+curl -O https://raw.githubusercontent.com/much-GmbH-sandbox/base-repo/main/.isort.cfg
+curl -O https://raw.githubusercontent.com/much-GmbH-sandbox/base-repo/main/pyproject.toml
 
-# For Odoo 18
-curl -o .pylintrc \
-  https://raw.githubusercontent.com/much-GmbH/github-actions/main/configs/.pylintrc-odoo18
+# Pylint config (choose your Odoo version)
+curl -o .pylintrc https://raw.githubusercontent.com/much-GmbH-sandbox/base-repo/main/pylintrc/.pylintrc-odoo17
 ```
 
 ## Manual Run
@@ -123,4 +123,4 @@ Check `.pylintrc` for enabled checks. You can disable specific checks with `# py
 Make sure you ran `pre-commit install` in the repo root.
 
 ### Missing config file errors
-Copy the required config files from base-repo (see Required Config Files section above).
+Copy the required config files from [base-repo](https://github.com/much-GmbH-sandbox/base-repo).
