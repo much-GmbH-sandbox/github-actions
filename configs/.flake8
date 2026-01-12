@@ -34,6 +34,8 @@ ignore =
 per-file-ignores =
     # __init__.py files often have unused imports for re-exporting
     __init__.py: F401
+    # __manifest__.py is a dict literal evaluated by Odoo (not useless)
+    __manifest__.py: B018
     # Migration scripts may have unused imports
     */migrations/*.py: F401
     # Test files may have more flexibility
