@@ -75,12 +75,12 @@ jobs:
             ${{ runner.os }}-pip-${{ inputs.odoo-version }}-
             ${{ runner.os }}-pip-
 
-      - name: Download configs from central repo
+      - name: Download dev-requirements from central repo
         env:
           # Use CONFIG_TOKEN if provided (for private repo), otherwise github.token (for public repo)
           GH_TOKEN: ${{ secrets.CONFIG_TOKEN || github.token }}
         run: |
-          echo "::group::Downloading configs from github-actions repo"
+          echo "::group::Downloading dev-requirements from github-actions repo"
 
           # Function to download file from repo via GitHub API
           download_file() {
@@ -106,13 +106,21 @@ jobs:
           download_file "dev-requirements/base.txt" "/tmp/base.txt" || exit 1
           download_file "dev-requirements/odoo${{ inputs.odoo-version }}.txt" "/tmp/odoo.txt" || exit 1
 
-          # Download configs
-          download_file "configs/.flake8" "/tmp/.flake8" || exit 1
-          download_file "configs/.bandit" "/tmp/.bandit" || exit 1
-          download_file "configs/.pylintrc-odoo${{ inputs.odoo-version }}" "/tmp/.pylintrc" || exit 1
-
           echo "Downloaded files:"
-          ls -la /tmp/*.txt /tmp/.flake8 /tmp/.bandit /tmp/.pylintrc
+          ls -la /tmp/*.txt
+          echo "::endgroup::"
+
+      - name: Verify local configs
+        run: |
+          echo "::group::Checking local config files"
+          # Configs should exist in the repo (inherited from base-repo template)
+          for config in .flake8 .bandit .pylintrc; do
+            if [ -f "$config" ]; then
+              echo "✓ Found $config"
+            else
+              echo "::warning::Missing $config - using defaults"
+            fi
+          done
           echo "::endgroup::"
 
       - name: Install quality tools
@@ -170,7 +178,7 @@ jobs:
         continue-on-error: true
         run: |
           echo "::group::Flake8 Check"
-          if python -m flake8 . --config=/tmp/.flake8; then
+          if python -m flake8 . --config=.flake8; then
             echo "result=pass" >> $GITHUB_OUTPUT
             echo "Flake8: No issues found"
           else
@@ -193,7 +201,7 @@ jobs:
           else
             echo "Found modules: $MODULES"
 
-            if python -m pylint $MODULES --rcfile=/tmp/.pylintrc --output-format=colorized; then
+            if python -m pylint $MODULES --rcfile=.pylintrc --output-format=colorized; then
               echo "result=pass" >> $GITHUB_OUTPUT
               echo "Pylint-Odoo: No issues found"
             else
@@ -228,7 +236,7 @@ jobs:
         continue-on-error: true
         run: |
           echo "::group::Bandit Security Check"
-          if python -m bandit -r . -c /tmp/.bandit -f custom \
+          if python -m bandit -r . -c .bandit -f custom \
             --msg-template "{relpath}:{line}: [{severity}] {test_id}: {msg}"; then
             echo "result=pass" >> $GITHUB_OUTPUT
             echo "Bandit: No security issues found"
