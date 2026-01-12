@@ -224,7 +224,8 @@ jobs:
             else
               echo "result=fail" >> $GITHUB_OUTPUT
               # Extract error/warning lines (limit to 10)
-              ERRORS=$(echo "$OUTPUT" | grep -E "^[^*].*:\s*[CWERF][0-9]+" | head -10 | sed 's/^/- `/' | sed 's/$/`/')
+              # Format: file.py:line: [CODE(name), context] message
+              ERRORS=$(echo "$OUTPUT" | grep -E "\.py:[0-9]+:.*\[[CWERF][0-9]+" | head -10 | sed 's/^/- `/' | sed 's/$/`/')
               echo "errors<<EOF" >> $GITHUB_OUTPUT
               echo "$ERRORS" >> $GITHUB_OUTPUT
               echo "EOF" >> $GITHUB_OUTPUT
