@@ -156,7 +156,12 @@ jobs:
             echo "Black: All files properly formatted"
           else
             echo "result=fail" >> $GITHUB_OUTPUT
-            echo "::warning::Black formatting issues found"
+            echo "::warning::Black formatting issues found. Run 'black .' locally to fix."
+            echo ""
+            echo "To auto-fix formatting before commits, set up pre-commit hooks:"
+            echo "  pip install pre-commit && pre-commit install"
+            echo ""
+            echo "See: https://github.com/${{ github.repository_owner }}/github-actions/blob/main/.github/docs/PRE_COMMIT.md"
           fi
           echo "::endgroup::"
 

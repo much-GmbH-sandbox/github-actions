@@ -3,9 +3,10 @@
 # Customize the odoo-version and python-version inputs for your project
 #
 # Version pinning: Uses @v1 for stability. Check github-actions repo for latest version.
+# Formatting: Run pre-commit locally (see .github/docs/PRE_COMMIT.md)
 #
 # Flow:
-#   PR: Auto-Format → Quality Checks → (optional) Jenkins
+#   PR: Quality Checks → (optional) Jenkins
 #   Push: Quality Checks → (optional) Jenkins
 
 name: CI
@@ -36,7 +37,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write    # Required for auto-format to push commits
+  contents: read
   pull-requests: write
 
 jobs:
@@ -61,23 +62,13 @@ jobs:
               - '**/requirements*.txt'
               - '**/__manifest__.py'
 
-  # Auto-format (PRs only) - automatically fixes formatting and pushes back
-  auto-format:
-    name: Auto-Format
-    if: github.event_name == 'pull_request'
-    # CUSTOMIZE: Change the repository owner to match your sandbox/production org
-    uses: much-GmbH-sandbox/github-actions/.github/workflows/auto-format.yml@v1
-    with:
-      python-version: '3.10'
-
-  # Quality checks
+  # Quality checks (Black, Flake8, Pylint-Odoo, Radon, Bandit, SonarQube)
+  # If Black fails, run 'black .' locally or set up pre-commit hooks
+  # See: https://github.com/YOUR_ORG/github-actions/blob/main/.github/docs/PRE_COMMIT.md
   quality:
     name: Quality
-    needs: [changes, auto-format]
-    if: |
-      always() &&
-      needs.changes.outputs.code == 'true' &&
-      (needs.auto-format.result == 'success' || needs.auto-format.result == 'skipped')
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     # CUSTOMIZE: Change the repository owner to match your sandbox/production org
     uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@v1
     with:

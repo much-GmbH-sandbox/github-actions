@@ -28,7 +28,7 @@ jobs:
     secrets: inherit
 ```
 
-**Recommended**: Also add the [pre-commit.ci](https://pre-commit.ci) configuration to your `.pre-commit-config.yaml` for automatic formatting fixes on PRs. See the `templates/.pre-commit-config.yaml` file for a complete example.
+**Recommended**: Set up pre-commit hooks locally to auto-fix formatting before commits. See [Pre-commit Setup Guide](.github/docs/PRE_COMMIT.md).
 
 ## Workflows
 
@@ -71,45 +71,6 @@ jobs:
     secrets: inherit
 ```
 
-### `auto-format.yml` - Auto-Fix Formatting (PRs only)
-
-Automatically fixes formatting issues on PRs and pushes the fix back to the branch.
-A free, self-hosted alternative to pre-commit.ci.
-
-**Features**:
-- Runs Black formatter for Python code
-- Fixes trailing whitespace
-- Ensures files end with newline
-- Pushes fixes back to PR branch automatically
-- Skips fork PRs (no write access) with helpful message
-
-**Inputs**:
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `python-version` | No | 3.10 | Python version for formatters |
-| `black-version` | No | 25.1.0 | Black version to use |
-
-**Outputs**:
-- `changes-made` - Whether formatting changes were committed
-
-**Example**:
-```yaml
-jobs:
-  auto-format:
-    if: github.event_name == 'pull_request'
-    uses: much-GmbH-sandbox/github-actions/.github/workflows/auto-format.yml@v1
-    with:
-      python-version: '3.10'
-
-  quality:
-    needs: [auto-format]
-    if: always()
-    uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@v1
-    # ...
-```
-
-**Important**: The calling workflow needs `permissions: contents: write` for the auto-format job to push commits.
-
 ### `jenkins-trigger.yml` - Jenkins Integration
 
 Triggers Jenkins Docker build jobs after quality checks pass.
@@ -143,10 +104,12 @@ jobs:
 
 ```
 github-actions/
-├── .github/workflows/
-│   ├── odoo-quality.yml      # Quality checks workflow
-│   ├── auto-format.yml       # Auto-fix formatting (PRs)
-│   └── jenkins-trigger.yml   # Jenkins integration
+├── .github/
+│   ├── workflows/
+│   │   ├── odoo-quality.yml      # Quality checks workflow
+│   │   └── jenkins-trigger.yml   # Jenkins integration
+│   └── docs/
+│       └── PRE_COMMIT.md         # Pre-commit setup guide
 ├── configs/
 │   ├── .flake8               # Flake8 configuration
 │   ├── .bandit               # Bandit security config
@@ -254,38 +217,27 @@ uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@main
 - Breaking changes → new major version (v2, v3, etc.)
 - Bug fixes and new features → minor/patch versions (v1.1.0, v1.0.1)
 
-## Auto-Formatting Options
+## Code Formatting
 
-Two options for automatic formatting fixes on PRs:
+Format your code locally before committing using pre-commit hooks.
 
-### Option 1: Self-Hosted `auto-format.yml` (Recommended for Private Repos)
+### Quick Setup
 
-Use the built-in `auto-format.yml` workflow - free, no external service needed.
-
-```yaml
-jobs:
-  auto-format:
-    if: github.event_name == 'pull_request'
-    uses: much-GmbH-sandbox/github-actions/.github/workflows/auto-format.yml@v1
+```bash
+pip install pre-commit
+pre-commit install
 ```
 
-**Cost**: ~$0.008 per PR (1 minute of GitHub Actions time)
+Hooks will now run automatically on every commit. See the [Pre-commit Setup Guide](.github/docs/PRE_COMMIT.md) for detailed instructions.
 
-### Option 2: pre-commit.ci (For Public Repos)
+### Fixing CI Failures
 
-For public/open source repos, [pre-commit.ci](https://pre-commit.ci) is free:
+If Black fails in CI:
 
-1. Sign up at pre-commit.ci with your GitHub org
-2. Add the `ci:` section to your repo's `.pre-commit-config.yaml`:
-
-```yaml
-ci:
-  autofix_commit_msg: "style: auto-format with pre-commit.ci [skip ci]"
-  autofix_prs: true
-  autoupdate_schedule: monthly
+```bash
+black .
+git add -A && git commit -m "style: fix formatting" && git push
 ```
-
-**Cost**: Free for open source, $10/month for private repos.
 
 ## Troubleshooting
 
