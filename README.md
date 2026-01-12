@@ -71,6 +71,45 @@ jobs:
     secrets: inherit
 ```
 
+### `auto-format.yml` - Auto-Fix Formatting (PRs only)
+
+Automatically fixes formatting issues on PRs and pushes the fix back to the branch.
+A free, self-hosted alternative to pre-commit.ci.
+
+**Features**:
+- Runs Black formatter for Python code
+- Fixes trailing whitespace
+- Ensures files end with newline
+- Pushes fixes back to PR branch automatically
+- Skips fork PRs (no write access) with helpful message
+
+**Inputs**:
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `python-version` | No | 3.10 | Python version for formatters |
+| `black-version` | No | 25.1.0 | Black version to use |
+
+**Outputs**:
+- `changes-made` - Whether formatting changes were committed
+
+**Example**:
+```yaml
+jobs:
+  auto-format:
+    if: github.event_name == 'pull_request'
+    uses: much-GmbH-sandbox/github-actions/.github/workflows/auto-format.yml@v1
+    with:
+      python-version: '3.10'
+
+  quality:
+    needs: [auto-format]
+    if: always()
+    uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@v1
+    # ...
+```
+
+**Important**: The calling workflow needs `permissions: contents: write` for the auto-format job to push commits.
+
 ### `jenkins-trigger.yml` - Jenkins Integration
 
 Triggers Jenkins Docker build jobs after quality checks pass.
@@ -105,7 +144,8 @@ jobs:
 ```
 github-actions/
 ├── .github/workflows/
-│   ├── odoo-quality.yml      # Main quality workflow
+│   ├── odoo-quality.yml      # Quality checks workflow
+│   ├── auto-format.yml       # Auto-fix formatting (PRs)
 │   └── jenkins-trigger.yml   # Jenkins integration
 ├── configs/
 │   ├── .flake8               # Flake8 configuration
@@ -114,8 +154,11 @@ github-actions/
 ├── dev-requirements/
 │   ├── base.txt              # Core tools
 │   └── odoo{14-18}.txt       # Version-specific tools
+├── templates/
+│   ├── ci.yml                # Full CI/CD template
+│   └── .pre-commit-config.yaml  # Pre-commit hooks
 ├── workflow-templates/
-│   └── odoo-addon-ci.yml     # Template for new repos
+│   └── odoo-addon-ci.yml     # Alternative template
 └── README.md
 ```
 
@@ -211,11 +254,28 @@ uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-quality.yml@main
 - Breaking changes → new major version (v2, v3, etc.)
 - Bug fixes and new features → minor/patch versions (v1.1.0, v1.0.1)
 
-## Pre-commit.ci Integration
+## Auto-Formatting Options
 
-For automatic formatting fixes on PRs (so developers don't have to run formatters manually):
+Two options for automatic formatting fixes on PRs:
 
-1. Sign up at [pre-commit.ci](https://pre-commit.ci) with your GitHub org
+### Option 1: Self-Hosted `auto-format.yml` (Recommended for Private Repos)
+
+Use the built-in `auto-format.yml` workflow - free, no external service needed.
+
+```yaml
+jobs:
+  auto-format:
+    if: github.event_name == 'pull_request'
+    uses: much-GmbH-sandbox/github-actions/.github/workflows/auto-format.yml@v1
+```
+
+**Cost**: ~$0.008 per PR (1 minute of GitHub Actions time)
+
+### Option 2: pre-commit.ci (For Public Repos)
+
+For public/open source repos, [pre-commit.ci](https://pre-commit.ci) is free:
+
+1. Sign up at pre-commit.ci with your GitHub org
 2. Add the `ci:` section to your repo's `.pre-commit-config.yaml`:
 
 ```yaml
@@ -225,9 +285,7 @@ ci:
   autoupdate_schedule: monthly
 ```
 
-See `templates/.pre-commit-config.yaml` for a complete example.
-
-**Cost**: Free for open source, $10/month for private repos (startup tier).
+**Cost**: Free for open source, $10/month for private repos.
 
 ## Troubleshooting
 

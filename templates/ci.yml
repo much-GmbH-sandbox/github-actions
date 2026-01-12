@@ -7,7 +7,7 @@
 #   edition = "enterprise"
 #
 # Flow:
-#   PR: Quality Checks → Jenkins (Unit Tests)
+#   PR: Auto-Format → Quality Checks → Jenkins (Unit Tests)
 #   Push to deploy branch: Quality Checks → Jenkins (Tests + Deploy if build_docker=true)
 #   Push to non-deploy branch: Quality Checks → Jenkins (Tests only)
 #
@@ -27,14 +27,30 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write   # Required for auto-format to push commits
   pull-requests: write
 
 jobs:
   # ============================================
+  # Stage 0: Auto-Format (PRs only)
+  # ============================================
+  # Automatically fixes formatting issues and pushes back to PR branch.
+  # Uses Black formatter and fixes trailing whitespace.
+  # Skipped on push to main/staging (only runs on PRs).
+  auto-format:
+    if: github.event_name == 'pull_request'
+    uses: YOUR_ORG/github-actions/.github/workflows/auto-format.yml@v1
+    with:
+      python-version: '3.10'
+    # Note: secrets not needed - uses GITHUB_TOKEN automatically
+
+  # ============================================
   # Stage 1: Quality Checks (GitHub Actions)
   # ============================================
   quality:
+    needs: [auto-format]
+    # Run quality even if auto-format was skipped (push events) or made changes
+    if: always() && (needs.auto-format.result == 'success' || needs.auto-format.result == 'skipped')
     uses: YOUR_ORG/github-actions/.github/workflows/odoo-quality.yml@v1
     with:
       odoo-version: '17'      # Must match pyproject.toml [odoo] version
@@ -54,6 +70,7 @@ jobs:
   # Tests always run. Deploy only on push to deploy-branches with build_docker=true.
   jenkins:
     needs: quality
+    if: needs.quality.result == 'success'
     uses: YOUR_ORG/github-actions/.github/workflows/jenkins-trigger.yml@v1
     with:
       deploy-branches: 'main,production'  # Branches that trigger Docker deploy (comma-separated)
