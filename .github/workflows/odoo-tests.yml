@@ -216,7 +216,6 @@ jobs:
 
       - name: Login to Docker registry
         if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true'
-        continue-on-error: true
         uses: docker/login-action@v3
         with:
           registry: ${{ secrets.REGISTRY_URL }}
@@ -276,16 +275,14 @@ jobs:
             touch .env
           fi
 
-          # Update environment variables
-          cat >> .env << EOF
-          OD_VERSION=${{ inputs.odoo-version }}
-          OD_SHELL_SCRIPT=
-          TEST_ENABLED=true
-          TEST_TAGS=${{ inputs.test-tags }}
-          BASE_MODULES=
-          CUSTOM_MODULES=${{ steps.final.outputs.modules }}
-          VCPUS=2
-          EOF
+          # Replace environment variables using sed (not append, to override template values)
+          sed -i 's|^OD_VERSION=.*|OD_VERSION=${{ inputs.odoo-version }}|' .env
+          sed -i 's|^OD_SHELL_SCRIPT=.*|OD_SHELL_SCRIPT=|' .env
+          sed -i 's|^TEST_ENABLED=.*|TEST_ENABLED=true|' .env
+          sed -i 's|^TEST_TAGS=.*|TEST_TAGS=${{ inputs.test-tags }}|' .env
+          sed -i 's|^BASE_MODULES=.*|BASE_MODULES=|' .env
+          sed -i 's|^CUSTOM_MODULES=.*|CUSTOM_MODULES=${{ steps.final.outputs.modules }}|' .env
+          sed -i 's|^VCPUS=.*|VCPUS=2|' .env
 
           echo "Environment configured:"
           cat .env
