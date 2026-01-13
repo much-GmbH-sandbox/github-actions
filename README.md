@@ -8,13 +8,13 @@ Central repository for reusable GitHub Actions workflows for Odoo addon developm
 
 ### New Repository (Recommended)
 
-Use [base-repo](https://github.com/much-GmbH-sandbox/base-repo) as a template:
-1. Click "Use this template" on the base-repo page
+Use [base-template](https://github.com/much-GmbH-sandbox/base-template) as a template:
+1. Click "Use this template" on the base-template page
 2. Create your new repository
 3. Update `pyproject.toml` with your Odoo version
 4. Copy the appropriate `.pylintrc` for your version
 
-base-repo includes:
+base-template includes:
 - CI workflow using these centralized workflows
 - All linter configs (`.flake8`, `.bandit`, `.pylintrc`)
 - Pre-commit hooks configuration
@@ -44,7 +44,7 @@ jobs:
     secrets: inherit
 ```
 
-Then copy config files from [base-repo](https://github.com/much-GmbH-sandbox/base-repo).
+Then copy config files from [base-template](https://github.com/much-GmbH-sandbox/base-template).
 
 ## Workflows
 
@@ -110,7 +110,7 @@ github-actions/
 └── README.md
 ```
 
-**Note**: Linter configs (`.flake8`, `.bandit`, `.pylintrc`) are in [base-repo](https://github.com/much-GmbH-sandbox/base-repo).
+**Note**: Linter configs (`.flake8`, `.bandit`, `.pylintrc`) are in [base-template](https://github.com/much-GmbH-sandbox/base-template).
 
 ## Supported Odoo Versions
 
@@ -168,8 +168,8 @@ pip install pre-commit
 pre-commit install
 ```
 
-See the [Pre-commit Setup Guide](.github/docs/PRE_COMMIT.md) or [base-repo](https://github.com/much-GmbH-sandbox/base-repo) for config files.
+See the [Pre-commit Setup Guide](.github/docs/PRE_COMMIT.md) or [base-template](https://github.com/much-GmbH-sandbox/base-template) for config files.
 
 ## Related Repositories
 
-- [base-repo](https://github.com/much-GmbH-sandbox/base-repo) - Template with linter configs and CI workflow
+- [base-template](https://github.com/much-GmbH-sandbox/base-template) - Template with linter configs and CI workflow

@@ -113,7 +113,7 @@ jobs:
       - name: Verify local configs
         run: |
           echo "::group::Checking local config files"
-          # Configs should exist in the repo (inherited from base-repo template)
+          # Configs should exist in the repo (inherited from base-template template)
           for config in .flake8 .bandit .pylintrc; do
             if [ -f "$config" ]; then
               echo "✓ Found $config"
