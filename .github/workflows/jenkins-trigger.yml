@@ -5,14 +5,21 @@
 #   - Odoo version
 #   - Whether to build Docker (build_docker = true)
 #   - Odoo edition (enterprise/community)
+#   - [deploy] section for deploy requirements
 #
 # Behavior:
 #   - Docker builds only trigger on push to deploy branches with build_docker=true
 #   - PRs do NOT trigger Jenkins (tests run in GitHub Actions via odoo-tests.yml)
+#   - Supports wildcard patterns in deploy-branches (e.g., staging-* matches staging-dev-foo)
+#   - Can skip CI stages in Jenkins (quality checks already done in GitHub Actions)
 #
 # Usage:
 #   - On PR: does nothing (tests handled by odoo-tests.yml)
 #   - On push to deploy branch: triggers Docker build (if build_docker=true)
+#
+# Cost Efficiency:
+#   - When skip-ci-in-jenkins=true, Jenkins skips QA stages (already done in GitHub Actions)
+#   - This avoids running quality checks and tests twice
 #
 # Note: Concurrency should be set in the calling workflow, not here.
 # This allows the caller to define the concurrency group based on their context.
@@ -25,7 +32,7 @@ on:
     # This allows the caller to define the concurrency group based on their context
     inputs:
       deploy-branches:
-        description: 'Branches that trigger deploy (comma-separated, e.g., "main,production")'
+        description: 'Branch patterns that trigger deploy (comma-separated, supports wildcards e.g., "main,staging-*")'
         required: false
         type: string
         default: 'main'
@@ -34,6 +41,11 @@ on:
         required: false
         type: boolean
         default: false
+      skip-ci-in-jenkins:
+        description: 'Tell Jenkins to skip QA stages (already done in GitHub Actions). Cost-efficient.'
+        required: false
+        type: boolean
+        default: true
     secrets:
       JENKINS_URL:
         required: false
@@ -51,6 +63,9 @@ on:
       build-docker:
         description: 'Whether Docker build is enabled'
         value: ${{ jobs.trigger.outputs.build-docker }}
+      skip-ci:
+        description: 'Whether Jenkins was told to skip CI stages'
+        value: ${{ jobs.trigger.outputs.skip-ci }}
 
 jobs:
   trigger:
@@ -60,6 +75,7 @@ jobs:
       triggered: ${{ steps.trigger.outputs.triggered }}
       odoo-version: ${{ steps.config.outputs.odoo-version }}
       build-docker: ${{ steps.config.outputs.build-docker }}
+      skip-ci: ${{ inputs.skip-ci-in-jenkins }}
 
     steps:
       - name: Checkout code
@@ -125,23 +141,32 @@ jobs:
           IS_PUSH="${{ github.event_name == 'push' }}"
           CURRENT_BRANCH="${{ github.ref_name }}"
           DEPLOY_BRANCHES="${{ inputs.deploy-branches }}"
+          SKIP_CI="${{ inputs.skip-ci-in-jenkins }}"
 
-          # Check if current branch is in deploy-branches list
+          # Check if current branch matches any deploy pattern (supports wildcards)
           IS_DEPLOY_BRANCH="false"
-          IFS=',' read -ra BRANCHES <<< "$DEPLOY_BRANCHES"
-          for branch in "${BRANCHES[@]}"; do
-            branch=$(echo "$branch" | xargs)  # trim whitespace
-            if [ "$CURRENT_BRANCH" == "$branch" ]; then
+          MATCHED_PATTERN=""
+          IFS=',' read -ra PATTERNS <<< "$DEPLOY_BRANCHES"
+          for pattern in "${PATTERNS[@]}"; do
+            pattern=$(echo "$pattern" | xargs)  # trim whitespace
+            # Use bash pattern matching (supports * wildcards)
+            # e.g., staging-* matches staging-dev-foo, staging-qa, etc.
+            if [[ "$CURRENT_BRANCH" == $pattern ]]; then
               IS_DEPLOY_BRANCH="true"
+              MATCHED_PATTERN="$pattern"
               break
             fi
           done
 
           echo "Event: ${{ github.event_name }}"
           echo "Current Branch: $CURRENT_BRANCH"
-          echo "Deploy Branches: $DEPLOY_BRANCHES"
+          echo "Deploy Patterns: $DEPLOY_BRANCHES"
           echo "Is Deploy Branch: $IS_DEPLOY_BRANCH"
+          if [ -n "$MATCHED_PATTERN" ]; then
+            echo "Matched Pattern: $MATCHED_PATTERN"
+          fi
           echo "Build Docker: $BUILD_DOCKER"
+          echo "Skip CI in Jenkins: $SKIP_CI"
 
           # PRs do NOT trigger Jenkins - tests run in GitHub Actions
           if [ "$IS_PUSH" != "true" ]; then
@@ -154,7 +179,11 @@ jobs:
           if [ "$IS_DEPLOY_BRANCH" == "true" ] && [ "$BUILD_DOCKER" == "true" ]; then
             echo "skip=false" >> $GITHUB_OUTPUT
             echo "deploy=true" >> $GITHUB_OUTPUT
-            echo "mode=Docker Build" >> $GITHUB_OUTPUT
+            if [ "$SKIP_CI" == "true" ]; then
+              echo "mode=Docker Build (skip CI)" >> $GITHUB_OUTPUT
+            else
+              echo "mode=Docker Build (full CI)" >> $GITHUB_OUTPUT
+            fi
           else
             echo "skip=true" >> $GITHUB_OUTPUT
             echo "deploy=false" >> $GITHUB_OUTPUT
@@ -216,8 +245,13 @@ jobs:
           echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Deploy | \`${{ steps.mode.outputs.deploy }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Deploy Branches | \`${{ inputs.deploy-branches }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy Patterns | \`${{ inputs.deploy-branches }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Skip CI in Jenkins | \`${{ inputs.skip-ci-in-jenkins }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.skip-ci-in-jenkins }}" == "true" ]; then
+            echo ":zap: **Cost-efficient mode:** Jenkins will skip QA stages (already done in GitHub Actions)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
           echo ":information_source: Dry-run mode - Jenkins was not triggered." >> $GITHUB_STEP_SUMMARY
 
           echo "::notice::Dry-run: Would trigger Jenkins (${{ steps.mode.outputs.mode }}) for ${{ github.repository }}@${{ github.ref_name }}"
@@ -231,6 +265,7 @@ jobs:
           echo "  Branch: ${{ github.ref_name }}"
           echo "  Commit: ${{ github.sha }}"
           echo "  Deploy: ${{ steps.mode.outputs.deploy }}"
+          echo "  Skip CI: ${{ inputs.skip-ci-in-jenkins }}"
 
           RESPONSE=$(curl -s -w "\n%{http_code}" \
             -X POST "${{ secrets.JENKINS_URL }}/generic-webhook-trigger/invoke" \
@@ -245,6 +280,7 @@ jobs:
               "git_hosts": "${{ steps.config.outputs.git-hosts }}",
               "deploy": ${{ steps.mode.outputs.deploy }},
               "build_docker": ${{ steps.config.outputs.build-docker }},
+              "skip_ci": ${{ inputs.skip-ci-in-jenkins }},
               "github_run_id": "${{ github.run_id }}",
               "github_run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
               "event": "${{ github.event_name }}",
@@ -282,7 +318,12 @@ jobs:
           echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Deploy | \`${{ steps.mode.outputs.deploy }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Skip CI in Jenkins | \`${{ inputs.skip-ci-in-jenkins }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.skip-ci-in-jenkins }}" == "true" ]; then
+            echo ":zap: **Cost-efficient mode:** Jenkins will skip QA stages (already done in GitHub Actions)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
           echo ":rocket: Jenkins job started!" >> $GITHUB_STEP_SUMMARY
 
           echo "::notice::Jenkins triggered (${{ steps.mode.outputs.mode }}) for ${{ github.repository }}@${{ github.ref_name }}"
