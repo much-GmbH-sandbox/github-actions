@@ -215,7 +215,8 @@ jobs:
           token: ${{ secrets.DOCKER_MINIMAL_TOKEN || secrets.CONFIG_TOKEN || github.token }}
 
       - name: Login to Docker registry
-        if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true' && secrets.REGISTRY_URL != ''
+        if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true'
+        continue-on-error: true
         uses: docker/login-action@v3
         with:
           registry: ${{ secrets.REGISTRY_URL }}
