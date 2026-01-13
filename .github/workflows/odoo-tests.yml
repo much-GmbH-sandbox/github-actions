@@ -276,7 +276,10 @@ jobs:
           fi
 
           # Replace environment variables using sed (not append, to override template values)
-          sed -i 's|^OD_VERSION=.*|OD_VERSION=${{ inputs.odoo-version }}|' .env
+          # Ensure version has .0 suffix (Docker images use 17.0, not 17)
+          OD_VER="${{ inputs.odoo-version }}"
+          [[ "$OD_VER" != *.* ]] && OD_VER="${OD_VER}.0"
+          sed -i "s|^OD_VERSION=.*|OD_VERSION=${OD_VER}|" .env
           sed -i 's|^OD_SHELL_SCRIPT=.*|OD_SHELL_SCRIPT=|' .env
           sed -i 's|^TEST_ENABLED=.*|TEST_ENABLED=true|' .env
           sed -i 's|^TEST_TAGS=.*|TEST_TAGS=${{ inputs.test-tags }}|' .env
