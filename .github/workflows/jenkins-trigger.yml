@@ -1,5 +1,5 @@
 # Jenkins Trigger - Reusable Workflow
-# Triggers Jenkins jobs for unit tests and/or Docker builds
+# Triggers Jenkins jobs for Docker builds and deployments
 #
 # Reads pyproject.toml from the repo to determine:
 #   - Odoo version
@@ -7,12 +7,12 @@
 #   - Odoo edition (enterprise/community)
 #
 # Behavior:
-#   - Tests always run when workflow is triggered
-#   - Deploy (Docker build) only on push to deploy branches with build_docker=true
+#   - Docker builds only trigger on push to deploy branches with build_docker=true
+#   - PRs do NOT trigger Jenkins (tests run in GitHub Actions via odoo-tests.yml)
 #
 # Usage:
-#   - On PR: triggers unit tests
-#   - On push to deploy branch: triggers tests + deploy (if build_docker=true)
+#   - On PR: does nothing (tests handled by odoo-tests.yml)
+#   - On push to deploy branch: triggers Docker build (if build_docker=true)
 #
 # Note: Concurrency should be set in the calling workflow, not here.
 # This allows the caller to define the concurrency group based on their context.
@@ -143,20 +143,22 @@ jobs:
           echo "Is Deploy Branch: $IS_DEPLOY_BRANCH"
           echo "Build Docker: $BUILD_DOCKER"
 
-          # PRs always run tests only (no deploy)
+          # PRs do NOT trigger Jenkins - tests run in GitHub Actions
           if [ "$IS_PUSH" != "true" ]; then
-            echo "deploy=false" >> $GITHUB_OUTPUT
-            echo "mode=Unit Tests" >> $GITHUB_OUTPUT
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "mode=Skipped (PR - tests run in GitHub Actions)" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # Push events - deploy only on deploy branches with build_docker=true
+          # Push events - Docker build only on deploy branches with build_docker=true
           if [ "$IS_DEPLOY_BRANCH" == "true" ] && [ "$BUILD_DOCKER" == "true" ]; then
+            echo "skip=false" >> $GITHUB_OUTPUT
             echo "deploy=true" >> $GITHUB_OUTPUT
-            echo "mode=Unit Tests + Docker Build" >> $GITHUB_OUTPUT
+            echo "mode=Docker Build" >> $GITHUB_OUTPUT
           else
+            echo "skip=true" >> $GITHUB_OUTPUT
             echo "deploy=false" >> $GITHUB_OUTPUT
-            echo "mode=Unit Tests" >> $GITHUB_OUTPUT
+            echo "mode=Skipped (not a deploy branch or build_docker=false)" >> $GITHUB_OUTPUT
           fi
 
       - name: Validate Jenkins configuration
@@ -172,8 +174,27 @@ jobs:
             echo "dry-run=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Log skipped trigger
+        if: steps.mode.outputs.skip == 'true'
+        run: |
+          echo "## Jenkins Trigger (Skipped)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Mode:** ${{ steps.mode.outputs.mode }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration from pyproject.toml" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Odoo Version | \`${{ steps.config.outputs.odoo-version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Docker | \`${{ steps.config.outputs.build-docker }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Edition | \`${{ steps.config.outputs.odoo-edition }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo ":information_source: Jenkins trigger skipped - ${{ steps.mode.outputs.mode }}" >> $GITHUB_STEP_SUMMARY
+
+          echo "::notice::Jenkins trigger skipped: ${{ steps.mode.outputs.mode }}"
+
       - name: Log Jenkins trigger (dry-run)
-        if: steps.validate.outputs.dry-run == 'true'
+        if: steps.mode.outputs.skip != 'true' && steps.validate.outputs.dry-run == 'true'
         run: |
           echo "## Jenkins Trigger (Dry Run)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -203,7 +224,7 @@ jobs:
 
       - name: Trigger Jenkins
         id: trigger
-        if: steps.validate.outputs.dry-run == 'false'
+        if: steps.mode.outputs.skip != 'true' && steps.validate.outputs.dry-run == 'false'
         run: |
           echo "Triggering Jenkins: ${{ steps.mode.outputs.mode }}"
           echo "  Repository: ${{ github.repository }}"

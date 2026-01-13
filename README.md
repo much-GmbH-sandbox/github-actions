@@ -42,6 +42,19 @@ jobs:
     with:
       odoo-version: '17'  # Change to your Odoo version
     secrets: inherit
+
+  tests:
+    needs: [quality]
+    uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-tests.yml@v1
+    with:
+      odoo-version: '17'
+    secrets: inherit
+
+  deploy:
+    needs: [tests]
+    if: github.event_name == 'push'
+    uses: much-GmbH-sandbox/github-actions/.github/workflows/jenkins-trigger.yml@v1
+    secrets: inherit
 ```
 
 Then copy config files from [base-template](https://github.com/much-GmbH-sandbox/base-template).
@@ -75,22 +88,58 @@ Consolidated quality checks running all tools in a single job (cost-optimized).
 - `SONAR_TOKEN` - SonarQube authentication token
 - `SONAR_HOST_URL` - SonarQube server URL
 
-### `jenkins-trigger.yml` - Jenkins Integration
+### `odoo-tests.yml` - Unit Tests
 
-Triggers Jenkins Docker build jobs after quality checks pass.
+Runs Odoo unit tests using `odoo-docker-minimal` with Docker Compose.
+
+**Features**:
+- Automatically discovers test modules (files containing test tags)
+- For PRs, only tests modules that were changed
+- Posts test results as PR comments
+- Respects `test_enabled` setting in `pyproject.toml`
 
 **Inputs**:
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `job-name` | No | odoo-docker-build | Jenkins job name |
-| `branch` | No | current | Branch to build |
-| `commit` | No | current | Commit SHA |
+| `odoo-version` | Yes | - | Odoo version (14, 15, 16, 17, 18) |
+| `test-tags` | No | much_unit | Test tags to run |
+| `strict-mode` | No | false | Fail on any test failure |
+| `timeout-minutes` | No | 30 | Test execution timeout |
+
+**Secrets** (required for enterprise testing):
+- `REGISTRY_URL` - Docker registry URL
+- `REGISTRY_USER` - Docker registry username
+- `REGISTRY_PASSWORD` - Docker registry password
+- `ENTERPRISE_TOKEN` - Token for downloading enterprise modules
+- `DOCKER_MINIMAL_TOKEN` - PAT for accessing odoo-docker-minimal repo
+
+**Outputs**:
+- `tests-passed` - Whether all tests passed (true/false)
+- `modules-tested` - Comma-separated list of tested modules
+
+### `jenkins-trigger.yml` - Jenkins Integration
+
+Triggers Jenkins Docker builds on push to deploy branches.
+
+**Behavior**:
+- PRs: Does nothing (tests run in GitHub Actions)
+- Push to deploy branch + `build_docker=true`: Triggers Docker build
+
+**Inputs**:
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `deploy-branches` | No | main | Branches that trigger deploy (comma-separated) |
 | `dry-run` | No | false | Log but don't trigger |
 
 **Secrets** (required for real triggers):
 - `JENKINS_URL` - Jenkins server URL
 - `JENKINS_USER` - Jenkins API username
 - `JENKINS_TOKEN` - Jenkins API token
+
+**Outputs**:
+- `triggered` - Whether Jenkins was triggered (true/false)
+- `odoo-version` - Odoo version from pyproject.toml
+- `build-docker` - Whether Docker build is enabled
 
 ## Repository Structure
 
@@ -99,7 +148,8 @@ github-actions/
 ├── .github/
 │   ├── workflows/
 │   │   ├── odoo-quality.yml      # Quality checks workflow
-│   │   └── jenkins-trigger.yml   # Jenkins integration
+│   │   ├── odoo-tests.yml        # Unit tests workflow
+│   │   └── jenkins-trigger.yml   # Jenkins Docker build trigger
 │   └── docs/
 │       └── PRE_COMMIT.md         # Pre-commit setup guide
 ├── dev-requirements/

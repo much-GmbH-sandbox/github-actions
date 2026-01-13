@@ -1,0 +1,473 @@
+# Odoo Unit Tests - Reusable Workflow
+# Runs Odoo unit tests using odoo-docker-minimal
+#
+# Uses docker-compose with odoo-docker-minimal to run tests in a containerized
+# environment with PostgreSQL. Follows the same pattern as Jenkins test execution.
+#
+# Note: Concurrency should be set in the calling workflow, not here.
+# This allows the caller to define the concurrency group based on their context.
+#
+# TODO: REGISTRY_USER is currently set to a personal account (gustavo.aguiar@muchconsulting.de).
+#       This should be replaced with a Harbor robot account for production use:
+#       1. Create robot account in Harbor: Administration → Robot Accounts
+#       2. Update REGISTRY_USER secret to: robot$<robot-name>
+#       3. Update REGISTRY_PASSWORD secret with the robot token
+
+name: Odoo Unit Tests
+
+on:
+  workflow_call:
+    inputs:
+      odoo-version:
+        description: 'Odoo version (14, 15, 16, 17, 18)'
+        required: true
+        type: string
+      test-tags:
+        description: 'Test tags to run (default: much_unit)'
+        required: false
+        type: string
+        default: 'much_unit'
+      strict-mode:
+        description: 'Fail workflow on any test failure'
+        required: false
+        type: boolean
+        default: false
+      timeout-minutes:
+        description: 'Test timeout in minutes'
+        required: false
+        type: number
+        default: 30
+    secrets:
+      REGISTRY_URL:
+        description: 'Docker registry URL for pulling Odoo images'
+        required: false
+      REGISTRY_USER:
+        description: 'Docker registry username'
+        required: false
+      REGISTRY_PASSWORD:
+        description: 'Docker registry password'
+        required: false
+      ENTERPRISE_TOKEN:
+        description: 'Token for downloading enterprise modules'
+        required: false
+      DOCKER_MINIMAL_TOKEN:
+        description: 'PAT for accessing odoo-docker-minimal repo (falls back to CONFIG_TOKEN)'
+        required: false
+      CONFIG_TOKEN:
+        description: 'Fallback PAT for private repo access'
+        required: false
+    outputs:
+      tests-passed:
+        description: 'Whether all tests passed'
+        value: ${{ jobs.test.outputs.tests-passed }}
+      modules-tested:
+        description: 'Comma-separated list of tested modules'
+        value: ${{ jobs.test.outputs.modules-tested }}
+
+jobs:
+  test:
+    name: Unit Tests (Odoo ${{ inputs.odoo-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      tests-passed: ${{ steps.summary.outputs.tests-passed }}
+      modules-tested: ${{ steps.discover.outputs.modules }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Read pyproject.toml
+        id: config
+        run: |
+          echo "::group::Reading pyproject.toml"
+
+          if [ ! -f pyproject.toml ]; then
+            echo "::error::pyproject.toml not found"
+            exit 1
+          fi
+
+          # Extract test_enabled
+          TEST_ENABLED=$(grep -E "^test_enabled\s*=" pyproject.toml | head -1 | sed 's/.*=\s*//; s/[" ]//g')
+          if [ "$TEST_ENABLED" != "true" ]; then
+            TEST_ENABLED="false"
+          fi
+          echo "test-enabled=$TEST_ENABLED" >> $GITHUB_OUTPUT
+          echo "Test Enabled: $TEST_ENABLED"
+
+          # Extract edition (enterprise/community)
+          ODOO_EDITION=$(grep -E "^edition\s*=" pyproject.toml | head -1 | sed 's/.*=\s*//; s/[" ]//g')
+          if [ -z "$ODOO_EDITION" ]; then
+            ODOO_EDITION="enterprise"
+          fi
+          echo "odoo-edition=$ODOO_EDITION" >> $GITHUB_OUTPUT
+          echo "Odoo Edition: $ODOO_EDITION"
+
+          echo "::endgroup::"
+
+      - name: Check if tests are enabled
+        id: check
+        run: |
+          if [ "${{ steps.config.outputs.test-enabled }}" != "true" ]; then
+            echo "::notice::Tests are disabled in pyproject.toml (test_enabled = false)"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Discover test modules
+        id: discover
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          echo "::group::Discovering test modules"
+
+          # Find modules with tests containing the test tag
+          TEST_TAG="${{ inputs.test-tags }}"
+          MODULES=$(find . -type f -path '*/tests/*.py' -exec grep -l "$TEST_TAG" {} \; 2>/dev/null | \
+                    rev | cut -d '/' -f 3 | rev | sort -u | tr '\n' ',' | sed 's/,$//')
+
+          if [ -z "$MODULES" ]; then
+            echo "::warning::No test modules found with tag '$TEST_TAG'"
+            echo "modules=" >> $GITHUB_OUTPUT
+            echo "count=0" >> $GITHUB_OUTPUT
+          else
+            echo "Found modules: $MODULES"
+            echo "modules=$MODULES" >> $GITHUB_OUTPUT
+            COUNT=$(echo "$MODULES" | tr ',' '\n' | wc -l | tr -d ' ')
+            echo "count=$COUNT" >> $GITHUB_OUTPUT
+          fi
+
+          echo "::endgroup::"
+
+      - name: Filter modules by PR changes
+        id: filter
+        if: steps.check.outputs.skip != 'true' && steps.discover.outputs.count != '0' && github.event_name == 'pull_request'
+        run: |
+          echo "::group::Filtering modules by PR changes"
+
+          # Get changed files in PR
+          CHANGED_DIRS=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | \
+                         cut -d '/' -f 1 | sort -u | tr '\n' '|' | sed 's/|$//')
+
+          if [ -z "$CHANGED_DIRS" ]; then
+            echo "No changed directories found"
+            echo "modules=${{ steps.discover.outputs.modules }}" >> $GITHUB_OUTPUT
+          else
+            echo "Changed directories: $CHANGED_DIRS"
+
+            # Filter modules to only those that changed
+            ALL_MODULES="${{ steps.discover.outputs.modules }}"
+            FILTERED=""
+            IFS=',' read -ra MODULE_ARR <<< "$ALL_MODULES"
+            for module in "${MODULE_ARR[@]}"; do
+              if echo "$CHANGED_DIRS" | grep -qw "$module"; then
+                if [ -n "$FILTERED" ]; then
+                  FILTERED="$FILTERED,$module"
+                else
+                  FILTERED="$module"
+                fi
+              fi
+            done
+
+            if [ -z "$FILTERED" ]; then
+              echo "::notice::No test modules were changed in this PR"
+              echo "modules=" >> $GITHUB_OUTPUT
+            else
+              echo "Filtered modules: $FILTERED"
+              echo "modules=$FILTERED" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+          echo "::endgroup::"
+
+      - name: Determine final test modules
+        id: final
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          # Use filtered modules for PRs, all modules for pushes
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            MODULES="${{ steps.filter.outputs.modules }}"
+          else
+            MODULES="${{ steps.discover.outputs.modules }}"
+          fi
+
+          if [ -z "$MODULES" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "::notice::No modules to test"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "modules=$MODULES" >> $GITHUB_OUTPUT
+            echo "Final test modules: $MODULES"
+          fi
+
+      - name: Checkout odoo-docker-minimal
+        if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: much-GmbH/odoo-docker-minimal
+          path: odoo-docker-minimal
+          token: ${{ secrets.DOCKER_MINIMAL_TOKEN || secrets.CONFIG_TOKEN || github.token }}
+
+      - name: Login to Docker registry
+        if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true' && secrets.REGISTRY_URL != ''
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY_URL }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Download enterprise modules
+        if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true' && steps.config.outputs.odoo-edition == 'enterprise'
+        run: |
+          echo "::group::Downloading enterprise modules"
+
+          if [ -z "${{ secrets.ENTERPRISE_TOKEN }}" ]; then
+            echo "::error::ENTERPRISE_TOKEN not configured but edition is enterprise"
+            exit 1
+          fi
+
+          # Get Odoo revision from odoo-docker-builds
+          ODOO_REVISION=$(curl -sL \
+            -H "Authorization: Bearer ${{ secrets.ENTERPRISE_TOKEN }}" \
+            "https://raw.githubusercontent.com/much-GmbH/odoo-docker-builds/main/docker/odoo-base/.env.example" | \
+            grep "ODOO_REVISION" | cut -d'=' -f2)
+
+          echo "Odoo revision: $ODOO_REVISION"
+
+          # Download enterprise modules
+          curl -L --fail --silent --show-error --max-time 60 \
+            -H "Authorization: Bearer ${{ secrets.ENTERPRISE_TOKEN }}" \
+            -o enterprise.zip \
+            "https://vcs.muchconsulting.dev/api/packages/much-GmbH/generic/enterprise_${{ inputs.odoo-version }}/${ODOO_REVISION}/enterprise.zip"
+
+          unzip -q enterprise.zip
+          echo "Enterprise modules downloaded"
+
+          echo "::endgroup::"
+
+      - name: Configure test environment
+        if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true'
+        run: |
+          echo "::group::Configuring test environment"
+
+          cd odoo-docker-minimal
+
+          # Create .env file from template
+          if [ -f .env.example ]; then
+            cp .env.example .env
+          else
+            touch .env
+          fi
+
+          # Update environment variables
+          cat >> .env << EOF
+          OD_VERSION=${{ inputs.odoo-version }}
+          OD_SHELL_SCRIPT=
+          TEST_ENABLED=true
+          TEST_TAGS=${{ inputs.test-tags }}
+          BASE_MODULES=
+          CUSTOM_MODULES=${{ steps.final.outputs.modules }}
+          VCPUS=2
+          EOF
+
+          echo "Environment configured:"
+          cat .env
+
+          echo "::endgroup::"
+
+      - name: Run tests
+        id: tests
+        if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true'
+        continue-on-error: true
+        run: |
+          echo "::group::Running Odoo unit tests"
+
+          cd odoo-docker-minimal
+
+          # Set the addons mount path to the workspace
+          export OD_ADDONS_MOUNT_PATH="${{ github.workspace }}"
+
+          # Pull images and start postgres
+          docker compose pull
+          docker compose up postgres -d
+
+          # Wait for postgres to be ready
+          echo "Waiting for PostgreSQL..."
+          sleep 10
+
+          # Run tests
+          START_TIME=$(date +%s)
+          if docker compose up odoo --exit-code-from odoo; then
+            echo "result=pass" >> $GITHUB_OUTPUT
+            echo "Tests passed!"
+          else
+            echo "result=fail" >> $GITHUB_OUTPUT
+            echo "Tests failed!"
+          fi
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "duration=$DURATION" >> $GITHUB_OUTPUT
+
+          # Capture logs
+          docker compose logs odoo > /tmp/odoo-test-logs.txt 2>&1 || true
+
+          echo "::endgroup::"
+
+      - name: Cleanup
+        if: always() && steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true'
+        run: |
+          cd odoo-docker-minimal 2>/dev/null && docker compose down --volumes || true
+
+      - name: Extract test errors
+        id: errors
+        if: steps.tests.outputs.result == 'fail'
+        run: |
+          echo "::group::Extracting test errors"
+
+          if [ -f /tmp/odoo-test-logs.txt ]; then
+            # Extract error messages from Odoo logs
+            ERRORS=$(grep -E "(ERROR|FAIL|AssertionError|Exception)" /tmp/odoo-test-logs.txt | \
+                     tail -20 | \
+                     sed 's/^/- /')
+
+            if [ -n "$ERRORS" ]; then
+              echo "errors<<EOF" >> $GITHUB_OUTPUT
+              echo "$ERRORS" >> $GITHUB_OUTPUT
+              echo "EOF" >> $GITHUB_OUTPUT
+            else
+              echo "errors=Test execution failed. Check workflow logs for details." >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "errors=No test logs available." >> $GITHUB_OUTPUT
+          fi
+
+          echo "::endgroup::"
+
+      - name: Generate Summary
+        id: summary
+        if: always()
+        run: |
+          echo "## Unit Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Odoo Version**: ${{ inputs.odoo-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Tags**: ${{ inputs.test-tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          TESTS_PASSED=true
+
+          # Check if tests were skipped
+          if [ "${{ steps.check.outputs.skip }}" == "true" ]; then
+            echo "| Status | :fast_forward: Skipped (test_enabled = false) |" >> $GITHUB_STEP_SUMMARY
+            echo "tests-passed=true" >> $GITHUB_OUTPUT
+          elif [ "${{ steps.final.outputs.skip }}" == "true" ]; then
+            echo "| Status | :fast_forward: Skipped (no modules to test) |" >> $GITHUB_STEP_SUMMARY
+            echo "tests-passed=true" >> $GITHUB_OUTPUT
+          elif [ "${{ steps.tests.outputs.result }}" == "pass" ]; then
+            echo "| Status | :white_check_mark: Passed |" >> $GITHUB_STEP_SUMMARY
+            echo "| Modules | ${{ steps.final.outputs.modules }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Duration | ${{ steps.tests.outputs.duration }}s |" >> $GITHUB_STEP_SUMMARY
+            echo "tests-passed=true" >> $GITHUB_OUTPUT
+          else
+            echo "| Status | :x: Failed |" >> $GITHUB_STEP_SUMMARY
+            echo "| Modules | ${{ steps.final.outputs.modules }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Duration | ${{ steps.tests.outputs.duration }}s |" >> $GITHUB_STEP_SUMMARY
+            echo "tests-passed=false" >> $GITHUB_OUTPUT
+            TESTS_PASSED=false
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$TESTS_PASSED" == "true" ]; then
+            echo "### :tada: Tests completed successfully!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### :warning: Tests failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Comment on PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          TEST_ERRORS: ${{ steps.errors.outputs.errors }}
+        with:
+          script: |
+            const skipped = '${{ steps.check.outputs.skip }}' === 'true' || '${{ steps.final.outputs.skip }}' === 'true';
+            const passed = '${{ steps.tests.outputs.result }}' === 'pass';
+            const modules = '${{ steps.final.outputs.modules }}';
+            const duration = '${{ steps.tests.outputs.duration }}';
+            const errors = process.env.TEST_ERRORS || '';
+
+            let status, statusEmoji;
+            if (skipped) {
+              if ('${{ steps.check.outputs.skip }}' === 'true') {
+                status = 'Skipped (test_enabled = false)';
+              } else {
+                status = 'Skipped (no modules to test)';
+              }
+              statusEmoji = '⏭️';
+            } else if (passed) {
+              status = 'Passed';
+              statusEmoji = '✅';
+            } else {
+              status = 'Failed';
+              statusEmoji = '❌';
+            }
+
+            let body = `## Unit Test Results\n\n`;
+            body += `| Item | Value |\n|------|-------|\n`;
+            body += `| Status | ${statusEmoji} ${status} |\n`;
+            body += `| Odoo Version | ${{ inputs.odoo-version }} |\n`;
+            body += `| Test Tags | \`${{ inputs.test-tags }}\` |\n`;
+
+            if (!skipped) {
+              body += `| Modules | \`${modules}\` |\n`;
+              body += `| Duration | ${duration}s |\n`;
+            }
+
+            body += `\n`;
+
+            if (!skipped && !passed && errors) {
+              body += `<details>\n<summary><b>Test Errors</b></summary>\n\n`;
+              body += `\`\`\`\n${errors.trim()}\n\`\`\`\n`;
+              body += `</details>\n\n`;
+            }
+
+            body += `\nView the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for full details.`;
+
+            // Find existing comment to update
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Unit Test Results')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
+
+      - name: Enforce strict mode
+        if: ${{ inputs.strict-mode && steps.summary.outputs.tests-passed == 'false' }}
+        run: |
+          echo "::error::Tests failed in strict mode"
+          exit 1
