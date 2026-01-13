@@ -249,11 +249,13 @@ jobs:
             ODOO_REVISION="latest"
           fi
 
-          # Download enterprise modules from Gitea (uses basic auth with token)
+          # Download enterprise modules from Gitea
+          # Package name format: enterprise_<major>.<minor> (e.g., enterprise_17.0)
+          # Use basic auth with git user (username:token format)
           curl -L --fail --silent --show-error --max-time 120 \
             --user "git:$GITEA_TOKEN" \
             -o enterprise.zip \
-            "https://vcs.muchconsulting.dev/api/packages/much-GmbH/generic/enterprise_${{ inputs.odoo-version }}/${ODOO_REVISION}/enterprise.zip"
+            "https://vcs.muchconsulting.dev/api/packages/much-GmbH/generic/enterprise_${{ inputs.odoo-version }}.0/${ODOO_REVISION}/enterprise.zip"
 
           unzip -q enterprise.zip
           echo "Enterprise modules downloaded"
