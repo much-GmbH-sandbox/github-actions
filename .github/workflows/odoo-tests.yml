@@ -225,25 +225,33 @@ jobs:
 
       - name: Download enterprise modules
         if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true' && steps.config.outputs.odoo-edition == 'enterprise'
+        env:
+          GITEA_TOKEN: ${{ secrets.ENTERPRISE_TOKEN }}
+          GH_TOKEN: ${{ secrets.CONFIG_TOKEN || github.token }}
         run: |
           echo "::group::Downloading enterprise modules"
 
-          if [ -z "${{ secrets.ENTERPRISE_TOKEN }}" ]; then
+          if [ -z "$GITEA_TOKEN" ]; then
             echo "::error::ENTERPRISE_TOKEN not configured but edition is enterprise"
             exit 1
           fi
 
-          # Get Odoo revision from odoo-docker-builds
+          # Get Odoo revision from odoo-docker-builds (uses GitHub token)
           ODOO_REVISION=$(curl -sL \
-            -H "Authorization: Bearer ${{ secrets.ENTERPRISE_TOKEN }}" \
+            -H "Authorization: token $GH_TOKEN" \
             "https://raw.githubusercontent.com/much-GmbH/odoo-docker-builds/main/docker/odoo-base/.env.example" | \
             grep "ODOO_REVISION" | cut -d'=' -f2)
 
           echo "Odoo revision: $ODOO_REVISION"
 
-          # Download enterprise modules
-          curl -L --fail --silent --show-error --max-time 60 \
-            -H "Authorization: Bearer ${{ secrets.ENTERPRISE_TOKEN }}" \
+          if [ -z "$ODOO_REVISION" ]; then
+            echo "::warning::Could not determine Odoo revision, using 'latest'"
+            ODOO_REVISION="latest"
+          fi
+
+          # Download enterprise modules from Gitea (uses basic auth with token)
+          curl -L --fail --silent --show-error --max-time 120 \
+            --user "git:$GITEA_TOKEN" \
             -o enterprise.zip \
             "https://vcs.muchconsulting.dev/api/packages/much-GmbH/generic/enterprise_${{ inputs.odoo-version }}/${ODOO_REVISION}/enterprise.zip"
 
