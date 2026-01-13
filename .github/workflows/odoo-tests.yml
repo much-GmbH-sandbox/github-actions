@@ -295,7 +295,6 @@ jobs:
       - name: Run tests
         id: tests
         if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true'
-        continue-on-error: true
         run: |
           echo "::group::Running Odoo unit tests"
 
