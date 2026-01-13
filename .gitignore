@@ -53,3 +53,4 @@ htmlcov/
 .coverage
 *.cover
 test-odoo-addon/
+base-template/
