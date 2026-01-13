@@ -313,21 +313,26 @@ jobs:
 
           # Run tests
           START_TIME=$(date +%s)
-          if docker compose up odoo --exit-code-from odoo; then
-            echo "result=pass" >> $GITHUB_OUTPUT
-            echo "Tests passed!"
-          else
-            echo "result=fail" >> $GITHUB_OUTPUT
-            echo "Tests failed!"
-          fi
+          TEST_EXIT_CODE=0
+          docker compose up odoo --exit-code-from odoo || TEST_EXIT_CODE=$?
           END_TIME=$(date +%s)
           DURATION=$((END_TIME - START_TIME))
           echo "duration=$DURATION" >> $GITHUB_OUTPUT
 
-          # Capture logs
+          # Capture logs before checking result
           docker compose logs odoo > /tmp/odoo-test-logs.txt 2>&1 || true
 
           echo "::endgroup::"
+
+          # Exit with test result (step fails if tests failed)
+          if [ $TEST_EXIT_CODE -ne 0 ]; then
+            echo "result=fail" >> $GITHUB_OUTPUT
+            echo "::error::Tests failed with exit code $TEST_EXIT_CODE"
+            exit $TEST_EXIT_CODE
+          else
+            echo "result=pass" >> $GITHUB_OUTPUT
+            echo "Tests passed!"
+          fi
 
       - name: Cleanup
         if: always() && steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true'
