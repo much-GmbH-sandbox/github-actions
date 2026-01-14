@@ -93,8 +93,8 @@ jobs:
             exit 1
           fi
 
-          # Extract test_enabled
-          TEST_ENABLED=$(grep -E "^test_enabled\s*=" pyproject.toml | head -1 | sed 's/.*=\s*//; s/[" ]//g')
+          # Extract fast_tests
+          TEST_ENABLED=$(grep -E "^fast_tests\s*=" pyproject.toml | head -1 | sed 's/#.*//; s/.*=\s*//; s/[" ]//g')
           if [ "$TEST_ENABLED" != "true" ]; then
             TEST_ENABLED="false"
           fi
@@ -115,7 +115,7 @@ jobs:
         id: check
         run: |
           if [ "${{ steps.config.outputs.test-enabled }}" != "true" ]; then
-            echo "::notice::Tests are disabled in pyproject.toml (test_enabled = false)"
+            echo "::notice::Tests are disabled in pyproject.toml (fast_tests = false)"
             echo "skip=true" >> $GITHUB_OUTPUT
           else
             echo "skip=false" >> $GITHUB_OUTPUT
@@ -378,7 +378,7 @@ jobs:
 
           # Check if tests were skipped
           if [ "${{ steps.check.outputs.skip }}" == "true" ]; then
-            echo "| Status | :fast_forward: Skipped (test_enabled = false) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Status | :fast_forward: Skipped (fast_tests = false) |" >> $GITHUB_STEP_SUMMARY
             echo "tests-passed=true" >> $GITHUB_OUTPUT
           elif [ "${{ steps.final.outputs.skip }}" == "true" ]; then
             echo "| Status | :fast_forward: Skipped (no modules to test) |" >> $GITHUB_STEP_SUMMARY
@@ -420,7 +420,7 @@ jobs:
             let status, statusEmoji;
             if (skipped) {
               if ('${{ steps.check.outputs.skip }}' === 'true') {
-                status = 'Skipped (test_enabled = false)';
+                status = 'Skipped (fast_tests = false)';
               } else {
                 status = 'Skipped (no modules to test)';
               }
