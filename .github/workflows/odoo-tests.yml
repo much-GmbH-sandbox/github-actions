@@ -145,57 +145,12 @@ jobs:
 
           echo "::endgroup::"
 
-      - name: Filter modules by PR changes
-        id: filter
-        if: steps.check.outputs.skip != 'true' && steps.discover.outputs.count != '0' && github.event_name == 'pull_request'
-        run: |
-          echo "::group::Filtering modules by PR changes"
-
-          # Get changed files in PR
-          CHANGED_DIRS=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | \
-                         cut -d '/' -f 1 | sort -u | tr '\n' '|' | sed 's/|$//')
-
-          if [ -z "$CHANGED_DIRS" ]; then
-            echo "No changed directories found"
-            echo "modules=${{ steps.discover.outputs.modules }}" >> $GITHUB_OUTPUT
-          else
-            echo "Changed directories: $CHANGED_DIRS"
-
-            # Filter modules to only those that changed
-            ALL_MODULES="${{ steps.discover.outputs.modules }}"
-            FILTERED=""
-            IFS=',' read -ra MODULE_ARR <<< "$ALL_MODULES"
-            for module in "${MODULE_ARR[@]}"; do
-              if echo "$CHANGED_DIRS" | grep -qw "$module"; then
-                if [ -n "$FILTERED" ]; then
-                  FILTERED="$FILTERED,$module"
-                else
-                  FILTERED="$module"
-                fi
-              fi
-            done
-
-            if [ -z "$FILTERED" ]; then
-              echo "::notice::No test modules were changed in this PR"
-              echo "modules=" >> $GITHUB_OUTPUT
-            else
-              echo "Filtered modules: $FILTERED"
-              echo "modules=$FILTERED" >> $GITHUB_OUTPUT
-            fi
-          fi
-
-          echo "::endgroup::"
-
       - name: Determine final test modules
         id: final
         if: steps.check.outputs.skip != 'true'
         run: |
-          # Use filtered modules for PRs, all modules for pushes
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            MODULES="${{ steps.filter.outputs.modules }}"
-          else
-            MODULES="${{ steps.discover.outputs.modules }}"
-          fi
+          # Always run all discovered test modules (no PR filtering)
+          MODULES="${{ steps.discover.outputs.modules }}"
 
           if [ -z "$MODULES" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
