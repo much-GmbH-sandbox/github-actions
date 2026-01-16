@@ -105,7 +105,7 @@ jobs:
           fi
 
           # Extract test_enabled from [odoo.testing] section (preferred) or fall back to fast_tests from [odoo]
-          TEST_ENABLED=$(awk '/^\[odoo\.testing\]/,/^\[/' pyproject.toml | \
+          TEST_ENABLED=$(awk '/^\[odoo\.testing\]/{flag=1; next} /^\[/{flag=0} flag' pyproject.toml | \
                          grep -E "^enabled\s*=" | head -1 | \
                          sed 's/.*=\s*//; s/[" ]//g')
           if [ -z "$TEST_ENABLED" ]; then
@@ -131,21 +131,21 @@ jobs:
           echo "Odoo Edition: $ODOO_EDITION"
 
           # Extract install_all_modules from [odoo.testing] (defaults to input value or false)
-          INSTALL_ALL=$(awk '/^\[odoo\.testing\]/,/^\[/' pyproject.toml | \
+          INSTALL_ALL=$(awk '/^\[odoo\.testing\]/{flag=1; next} /^\[/{flag=0} flag' pyproject.toml | \
                         grep -E "^install_all_modules\s*=" | head -1 | \
                         sed 's/.*=\s*//; s/[" ]//g')
           echo "install-all=${INSTALL_ALL:-false}" >> $GITHUB_OUTPUT
           echo "Install All Modules: ${INSTALL_ALL:-false}"
 
           # Extract include_submodules from [odoo.testing] (defaults to input value or false)
-          INCLUDE_SUBS=$(awk '/^\[odoo\.testing\]/,/^\[/' pyproject.toml | \
+          INCLUDE_SUBS=$(awk '/^\[odoo\.testing\]/{flag=1; next} /^\[/{flag=0} flag' pyproject.toml | \
                          grep -E "^include_submodules\s*=" | head -1 | \
                          sed 's/.*=\s*//; s/[" ]//g')
           echo "include-submodules=${INCLUDE_SUBS:-false}" >> $GITHUB_OUTPUT
           echo "Include Submodules: ${INCLUDE_SUBS:-false}"
 
           # Extract test_tags from [odoo.testing] (optional override)
-          TEST_TAGS=$(awk '/^\[odoo\.testing\]/,/^\[/' pyproject.toml | \
+          TEST_TAGS=$(awk '/^\[odoo\.testing\]/{flag=1; next} /^\[/{flag=0} flag' pyproject.toml | \
                       grep -E "^test_tags\s*=" | head -1 | \
                       sed 's/.*=\s*//; s/[" ]//g')
           echo "test-tags=${TEST_TAGS:-}" >> $GITHUB_OUTPUT
