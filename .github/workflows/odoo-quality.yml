@@ -459,7 +459,7 @@ jobs:
               for (const [tool, error] of Object.entries(errors)) {
                 if (error && error.trim() && results[tool] !== 'pass') {
                   body += `<details>\n<summary><b>${toolNames[tool]}</b> issues</summary>\n\n`;
-                  body += `${error.trim()}\n`;
+                  body += `\`\`\`\n${error.trim()}\n\`\`\`\n`;
                   body += `</details>\n\n`;
                 }
               }
