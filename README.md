@@ -48,12 +48,10 @@ jobs:
     uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-tests.yml@v1
     with:
       odoo-version: '17'
-    secrets: inherit
-
-  deploy:
-    needs: [tests]
-    if: github.event_name == 'push'
-    uses: much-GmbH-sandbox/github-actions/.github/workflows/jenkins-trigger.yml@v1
+      # Optional: install all modules, not just those with tests
+      # install-all-modules: true
+      # Optional: include modules from git submodules
+      # include-submodules: true
     secrets: inherit
 ```
 
@@ -105,6 +103,8 @@ Runs Odoo unit tests using `odoo-docker-minimal` with Docker Compose.
 | `test-tags` | No | much_unit | Test tags to run |
 | `strict-mode` | No | false | Fail on any test failure |
 | `timeout-minutes` | No | 30 | Test execution timeout |
+| `install-all-modules` | No | false | Install all modules in repo, not just those with tests |
+| `include-submodules` | No | false | Include modules from git submodules |
 
 **Secrets** (required for enterprise testing):
 - `REGISTRY_URL` - Docker registry URL
@@ -117,30 +117,6 @@ Runs Odoo unit tests using `odoo-docker-minimal` with Docker Compose.
 - `tests-passed` - Whether all tests passed (true/false)
 - `modules-tested` - Comma-separated list of tested modules
 
-### `jenkins-trigger.yml` - Jenkins Integration
-
-Triggers Jenkins Docker builds on push to deploy branches.
-
-**Behavior**:
-- PRs: Does nothing (tests run in GitHub Actions)
-- Push to deploy branch + `build_docker=true`: Triggers Docker build
-
-**Inputs**:
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `deploy-branches` | No | main | Branches that trigger deploy (comma-separated) |
-| `dry-run` | No | false | Log but don't trigger |
-
-**Secrets** (required for real triggers):
-- `JENKINS_URL` - Jenkins server URL
-- `JENKINS_USER` - Jenkins API username
-- `JENKINS_TOKEN` - Jenkins API token
-
-**Outputs**:
-- `triggered` - Whether Jenkins was triggered (true/false)
-- `odoo-version` - Odoo version from pyproject.toml
-- `build-docker` - Whether Docker build is enabled
-
 ## Repository Structure
 
 ```
@@ -148,15 +124,13 @@ github-actions/
 ├── .github/
 │   ├── workflows/
 │   │   ├── odoo-quality.yml      # Quality checks workflow
-│   │   ├── odoo-tests.yml        # Unit tests workflow
-│   │   └── jenkins-trigger.yml   # Jenkins Docker build trigger
+│   │   └── odoo-tests.yml        # Unit tests workflow
 │   └── docs/
 │       └── PRE_COMMIT.md         # Pre-commit setup guide
 ├── dev-requirements/
 │   ├── base.txt                  # Core tools
 │   └── odoo{14-18}.txt           # Version-specific tools
-├── workflow-templates/
-│   └── odoo-addon-ci.yml         # GitHub workflow starter template
+├── base-template/                # Template for new Odoo addons
 └── README.md
 ```
 
