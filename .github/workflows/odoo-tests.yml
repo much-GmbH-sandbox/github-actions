@@ -293,8 +293,8 @@ jobs:
             fi
           fi
 
-          # Override with all modules if install-all is set
-          if [ "$INSTALL_ALL" == "true" ]; then
+          # Override with all modules if install-all is set (but NOT for pr-filtered mode)
+          if [ "$INSTALL_ALL" == "true" ] && [ "$TEST_MODE" != "pr-filtered" ]; then
             echo "install-all-modules enabled - installing ALL modules"
             MODULES="$ALL_MODULES"
           fi
