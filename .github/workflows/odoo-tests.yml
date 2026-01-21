@@ -486,6 +486,28 @@ jobs:
 
           echo "::endgroup::"
 
+      - name: Link dependency modules
+        if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true'
+        run: |
+          # Symlink dependency modules into workspace root so Odoo finds them
+          if [ -d "${{ github.workspace }}/deps" ]; then
+            echo "::group::Linking dependency modules"
+            for dep_repo in ${{ github.workspace }}/deps/*/; do
+              [ -d "$dep_repo" ] || continue
+              # Find all Odoo modules (directories with __manifest__.py)
+              find "$dep_repo" -maxdepth 2 -name "__manifest__.py" -type f | while read manifest; do
+                module_dir=$(dirname "$manifest")
+                module_name=$(basename "$module_dir")
+                # Skip if already exists in workspace
+                if [ ! -e "${{ github.workspace }}/$module_name" ]; then
+                  ln -s "$module_dir" "${{ github.workspace }}/$module_name"
+                  echo "Linked: $module_name -> $module_dir"
+                fi
+              done
+            done
+            echo "::endgroup::"
+          fi
+
       - name: Run tests
         id: tests
         if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true'
@@ -494,14 +516,8 @@ jobs:
 
           cd odoo-docker-minimal
 
-          # Build addons path: main workspace + each dependency
-          ADDONS_PATH="${{ github.workspace }}"
-          if [ -d "${{ github.workspace }}/deps" ]; then
-            for dep in ${{ github.workspace }}/deps/*/; do
-              [ -d "$dep" ] && ADDONS_PATH="${ADDONS_PATH}:${dep%/}"
-            done
-          fi
-          export OD_ADDONS_MOUNT_PATH="$ADDONS_PATH"
+          # Single addons path - dependencies are symlinked into workspace
+          export OD_ADDONS_MOUNT_PATH="${{ github.workspace }}"
           echo "Addons path: $OD_ADDONS_MOUNT_PATH"
 
           # Pull images and start postgres
