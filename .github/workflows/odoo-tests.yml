@@ -474,8 +474,18 @@ jobs:
           sed -i "s|^OD_VERSION=.*|OD_VERSION=${OD_VER}|" .env
           sed -i 's|^OD_SHELL_SCRIPT=.*|OD_SHELL_SCRIPT=|' .env
           sed -i 's|^TEST_ENABLED=.*|TEST_ENABLED=true|' .env
-          # Use effective test tag (from pyproject.toml or input, empty = all tests)
+
+          # Determine effective test tags
+          # If test-tag is empty (user wants all tests), use /module syntax to limit to tested modules only
+          # Otherwise use the specified tag
           EFFECTIVE_TAG="${{ steps.discover.outputs.test-tag }}"
+          if [ -z "$EFFECTIVE_TAG" ]; then
+            # Empty tag = run all tests, but ONLY for the modules being tested (not dependencies)
+            # Convert "mod1,mod2,mod3" to "/mod1,/mod2,/mod3" (comma-separated per Odoo docs)
+            MODULES="${{ steps.final.outputs.modules }}"
+            EFFECTIVE_TAG=$(echo "$MODULES" | sed 's/,/,\//g' | sed 's/^/\//')
+            echo "Using module-scoped tags: $EFFECTIVE_TAG"
+          fi
           sed -i "s|^TEST_TAGS=.*|TEST_TAGS=${EFFECTIVE_TAG}|" .env
           sed -i 's|^BASE_MODULES=.*|BASE_MODULES=|' .env
           sed -i 's|^CUSTOM_MODULES=.*|CUSTOM_MODULES=${{ steps.final.outputs.modules }}|' .env
