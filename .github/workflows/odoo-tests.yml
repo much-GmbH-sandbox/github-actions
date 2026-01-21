@@ -73,6 +73,9 @@ on:
       modules-tested:
         description: 'Comma-separated list of tested modules'
         value: ${{ jobs.test.outputs.modules-tested }}
+      test-mode:
+        description: 'Test mode used (push-all, pr-filtered, label-forced, *-fallback)'
+        value: ${{ jobs.test.outputs.test-mode }}
 
 jobs:
   test:
@@ -85,6 +88,7 @@ jobs:
     outputs:
       tests-passed: ${{ steps.summary.outputs.tests-passed }}
       modules-tested: ${{ steps.discover.outputs.modules }}
+      test-mode: ${{ steps.discover.outputs.test_mode }}
 
     steps:
       - name: Checkout code
@@ -93,6 +97,17 @@ jobs:
           ref: ${{ github.head_ref || github.ref }}
           fetch-depth: 0
           submodules: ${{ inputs.include-submodules && 'recursive' || 'false' }}
+
+      - name: Check for run-all-tests label
+        id: check-label
+        if: github.event_name == 'pull_request'
+        run: |
+          LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+          if echo "$LABELS" | grep -q "run-all-tests"; then
+            echo "force_all=true" >> $GITHUB_OUTPUT
+          else
+            echo "force_all=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Read pyproject.toml
         id: config
@@ -214,14 +229,77 @@ jobs:
           echo "Modules with tests ($TEST_TAG): $TEST_COUNT"
           [ -n "$TEST_MODULES" ] && echo "$TEST_MODULES" | tr ',' '\n'
 
-          # Determine which modules to install
-          if [ "$INSTALL_ALL" == "true" ]; then
-            MODULES="$ALL_MODULES"
-            echo "Mode: Installing ALL modules ($ALL_COUNT modules)"
-          else
+          # Determine test mode based on event type
+          if [ "${{ github.event_name }}" == "push" ]; then
+            # Push event - always run ALL tests
+            echo "Push event detected - running ALL module tests"
             MODULES="$TEST_MODULES"
-            echo "Mode: Installing only modules with tests ($TEST_COUNT modules)"
+            TEST_MODE="push-all"
+
+          elif [ "${{ steps.check-label.outputs.force_all }}" == "true" ]; then
+            # PR with run-all-tests label
+            echo "Label 'run-all-tests' detected - running ALL module tests"
+            MODULES="$TEST_MODULES"
+            TEST_MODE="label-forced"
+
+          else
+            # PR event - run only affected modules
+            echo "PR event - detecting affected modules..."
+
+            # Get changed files
+            git fetch origin ${{ github.base_ref }} --depth=1 2>/dev/null || true
+            CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD 2>/dev/null || echo "")
+
+            # Check for shared file changes that should trigger full test
+            if echo "$CHANGED_FILES" | grep -qE '^(requirements|setup\.py|pyproject\.toml|\.github/)'; then
+              echo "Changes in shared/config files - running ALL tests"
+              MODULES="$TEST_MODULES"
+              TEST_MODE="shared-files-fallback"
+            elif [ -z "$CHANGED_FILES" ]; then
+              echo "Could not determine changed files - running ALL tests as fallback"
+              MODULES="$TEST_MODULES"
+              TEST_MODE="no-changes-fallback"
+            else
+              # Extract module names from changed file paths
+              CHANGED_MODULES=$(echo "$CHANGED_FILES" | \
+                grep -E '\.(py|xml|csv|js|scss)$' | \
+                cut -d'/' -f1 | \
+                sort -u | tr '\n' ',' | sed 's/,$//')
+
+              if [ -z "$CHANGED_MODULES" ]; then
+                echo "No module changes detected - running ALL tests as fallback"
+                MODULES="$TEST_MODULES"
+                TEST_MODE="no-changes-fallback"
+              else
+                # Filter to modules that have tests
+                AFFECTED_WITH_TESTS=""
+                for mod in $(echo "$CHANGED_MODULES" | tr ',' ' '); do
+                  if echo ",$TEST_MODULES," | grep -q ",$mod,"; then
+                    AFFECTED_WITH_TESTS="${AFFECTED_WITH_TESTS}${mod},"
+                  fi
+                done
+                AFFECTED_WITH_TESTS=$(echo "$AFFECTED_WITH_TESTS" | sed 's/,$//')
+
+                if [ -z "$AFFECTED_WITH_TESTS" ]; then
+                  echo "Changed modules have no tests - running ALL tests as fallback"
+                  MODULES="$TEST_MODULES"
+                  TEST_MODE="no-tests-fallback"
+                else
+                  echo "Running tests for affected modules: $AFFECTED_WITH_TESTS"
+                  MODULES="$AFFECTED_WITH_TESTS"
+                  TEST_MODE="pr-filtered"
+                fi
+              fi
+            fi
           fi
+
+          # Override with all modules if install-all is set
+          if [ "$INSTALL_ALL" == "true" ]; then
+            echo "install-all-modules enabled - installing ALL modules"
+            MODULES="$ALL_MODULES"
+          fi
+
+          echo "test_mode=$TEST_MODE" >> $GITHUB_OUTPUT
           echo "modules=$MODULES" >> $GITHUB_OUTPUT
 
           if [ -z "$MODULES" ]; then
@@ -230,6 +308,8 @@ jobs:
           else
             COUNT=$(echo "$MODULES" | tr ',' '\n' | grep -c . || echo "0")
             echo "count=$COUNT" >> $GITHUB_OUTPUT
+            echo "Test Mode: $TEST_MODE"
+            echo "Modules to test: $MODULES"
           fi
 
           echo "::endgroup::"
@@ -462,11 +542,13 @@ jobs:
           elif [ "${{ steps.tests.outputs.result }}" == "pass" ]; then
             echo "| Status | :white_check_mark: Passed |" >> $GITHUB_STEP_SUMMARY
             echo "| Modules | ${{ steps.final.outputs.modules }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Test Mode | ${{ steps.discover.outputs.test_mode }} |" >> $GITHUB_STEP_SUMMARY
             echo "| Duration | ${{ steps.tests.outputs.duration }}s |" >> $GITHUB_STEP_SUMMARY
             echo "tests-passed=true" >> $GITHUB_OUTPUT
           else
             echo "| Status | :x: Failed |" >> $GITHUB_STEP_SUMMARY
             echo "| Modules | ${{ steps.final.outputs.modules }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Test Mode | ${{ steps.discover.outputs.test_mode }} |" >> $GITHUB_STEP_SUMMARY
             echo "| Duration | ${{ steps.tests.outputs.duration }}s |" >> $GITHUB_STEP_SUMMARY
             echo "tests-passed=false" >> $GITHUB_OUTPUT
             TESTS_PASSED=false
@@ -491,6 +573,7 @@ jobs:
             const testsPassed = '${{ steps.tests.outputs.result }}' === 'pass';
             const modules = '${{ steps.final.outputs.modules }}';
             const duration = '${{ steps.tests.outputs.duration }}';
+            const testMode = '${{ steps.discover.outputs.test_mode }}';
             const errors = process.env.TEST_ERRORS || '';
 
             // Test results from parsed logs
@@ -538,6 +621,7 @@ jobs:
 
             if (!skipped) {
               body += `| **Modules** | \`${modules}\` |\n`;
+              body += `| **Test Mode** | \`${testMode}\` |\n`;
               body += `| **Duration** | ${duration}s |\n`;
             }
 
