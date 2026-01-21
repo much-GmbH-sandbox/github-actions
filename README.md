@@ -48,10 +48,6 @@ jobs:
     uses: much-GmbH-sandbox/github-actions/.github/workflows/odoo-tests.yml@v1
     with:
       odoo-version: '17'
-      # Optional: install all modules, not just those with tests
-      # install-all-modules: true
-      # Optional: include modules from git submodules
-      # include-submodules: true
     secrets: inherit
 ```
 
@@ -92,7 +88,9 @@ Runs Odoo unit tests using `odoo-docker-minimal` with Docker Compose.
 
 **Features**:
 - Automatically discovers test modules (files containing test tags)
-- For PRs, only tests modules that were changed
+- For PRs, only tests modules that were changed (dependencies auto-installed by Odoo)
+- For pushes, runs all tests
+- Git submodules always included
 - Posts test results as PR comments
 - Respects `test_enabled` setting in `pyproject.toml`
 
@@ -103,8 +101,6 @@ Runs Odoo unit tests using `odoo-docker-minimal` with Docker Compose.
 | `test-tags` | No | much_unit | Test tags to run |
 | `strict-mode` | No | false | Fail on any test failure |
 | `timeout-minutes` | No | 30 | Test execution timeout |
-| `install-all-modules` | No | false | Install all modules in repo, not just those with tests |
-| `include-submodules` | No | false | Include modules from git submodules |
 
 **Secrets** (required for enterprise testing):
 - `REGISTRY_URL` - Docker registry URL
