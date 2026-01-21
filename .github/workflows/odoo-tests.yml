@@ -37,16 +37,6 @@ on:
         required: false
         type: number
         default: 30
-      install-all-modules:
-        description: 'Install all modules in repo, not just those with tests'
-        required: false
-        type: boolean
-        default: false
-      include-submodules:
-        description: 'Include modules from git submodules'
-        required: false
-        type: boolean
-        default: false
     secrets:
       REGISTRY_URL:
         description: 'Docker registry URL for pulling Odoo images'
@@ -96,7 +86,7 @@ jobs:
         with:
           ref: ${{ github.head_ref || github.ref }}
           fetch-depth: 0
-          submodules: ${{ inputs.include-submodules && 'recursive' || 'false' }}
+          submodules: recursive
 
       - name: Check for run-all-tests label
         id: check-label
@@ -145,20 +135,6 @@ jobs:
           echo "odoo-edition=$ODOO_EDITION" >> $GITHUB_OUTPUT
           echo "Odoo Edition: $ODOO_EDITION"
 
-          # Extract install_all_modules from [odoo.testing] (defaults to input value or false)
-          INSTALL_ALL=$(awk '/^\[odoo\.testing\]/{flag=1; next} /^\[/{flag=0} flag' pyproject.toml | \
-                        grep -E "^install_all_modules\s*=" | head -1 | \
-                        sed 's/.*=\s*//; s/[" ]//g')
-          echo "install-all=${INSTALL_ALL:-false}" >> $GITHUB_OUTPUT
-          echo "Install All Modules: ${INSTALL_ALL:-false}"
-
-          # Extract include_submodules from [odoo.testing] (defaults to input value or false)
-          INCLUDE_SUBS=$(awk '/^\[odoo\.testing\]/{flag=1; next} /^\[/{flag=0} flag' pyproject.toml | \
-                         grep -E "^include_submodules\s*=" | head -1 | \
-                         sed 's/.*=\s*//; s/[" ]//g')
-          echo "include-submodules=${INCLUDE_SUBS:-false}" >> $GITHUB_OUTPUT
-          echo "Include Submodules: ${INCLUDE_SUBS:-false}"
-
           # Extract test_tags from [odoo.testing] (optional override)
           TEST_TAGS=$(awk '/^\[odoo\.testing\]/{flag=1; next} /^\[/{flag=0} flag' pyproject.toml | \
                       grep -E "^test_tags\s*=" | head -1 | \
@@ -184,17 +160,6 @@ jobs:
         run: |
           echo "::group::Discovering modules"
 
-          # Determine effective settings (inputs override config file values if explicitly set)
-          # Config file value is used when input is false (default) and config is true
-          CONFIG_INSTALL_ALL="${{ steps.config.outputs.install-all }}"
-          INPUT_INSTALL_ALL="${{ inputs.install-all-modules }}"
-          if [ "$INPUT_INSTALL_ALL" == "true" ] || [ "$CONFIG_INSTALL_ALL" == "true" ]; then
-            INSTALL_ALL="true"
-          else
-            INSTALL_ALL="false"
-          fi
-          echo "Effective install-all-modules: $INSTALL_ALL"
-
           # Use test tag from config if set, otherwise use input
           CONFIG_TEST_TAGS="${{ steps.config.outputs.test-tags }}"
           INPUT_TEST_TAGS="${{ inputs.test-tags }}"
@@ -204,19 +169,6 @@ jobs:
             TEST_TAG="$INPUT_TEST_TAGS"
           fi
           echo "Effective test tag: $TEST_TAG"
-
-          # Find ALL Odoo modules (by __manifest__.py)
-          ALL_MODULES=$(find . -name '__manifest__.py' \
-                        -not -path './enterprise/*' \
-                        -not -path './odoo-docker-minimal/*' | \
-                        xargs -I {} dirname {} | \
-                        xargs -I {} basename {} | \
-                        sort -u | tr '\n' ',' | sed 's/,$//')
-          echo "all-modules=$ALL_MODULES" >> $GITHUB_OUTPUT
-          ALL_COUNT=$(echo "$ALL_MODULES" | tr ',' '\n' | grep -c . || echo "0")
-          echo "All modules found: $ALL_COUNT"
-          echo "$ALL_MODULES" | tr ',' '\n' | head -20
-          [ "$ALL_COUNT" -gt 20 ] && echo "... and $(($ALL_COUNT - 20)) more"
 
           # Find modules with tests containing the test tag
           TEST_MODULES=$(find . -type f -path '*/tests/*.py' \
@@ -291,12 +243,6 @@ jobs:
                 fi
               fi
             fi
-          fi
-
-          # Override with all modules if install-all is set (but NOT for pr-filtered mode)
-          if [ "$INSTALL_ALL" == "true" ] && [ "$TEST_MODE" != "pr-filtered" ]; then
-            echo "install-all-modules enabled - installing ALL modules"
-            MODULES="$ALL_MODULES"
           fi
 
           echo "test_mode=$TEST_MODE" >> $GITHUB_OUTPUT
