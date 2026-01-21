@@ -37,6 +37,11 @@ on:
         required: false
         type: number
         default: 30
+      skip-dependencies:
+        description: 'Skip cloning repository dependencies'
+        required: false
+        type: boolean
+        default: false
     secrets:
       REGISTRY_URL:
         description: 'Docker registry URL for pulling Odoo images'
@@ -87,6 +92,87 @@ jobs:
           ref: ${{ github.head_ref || github.ref }}
           fetch-depth: 0
           submodules: recursive
+
+      - name: Cache repository dependencies
+        if: inputs.skip-dependencies != true
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/deps
+          key: odoo-deps-${{ inputs.odoo-version }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            odoo-deps-${{ inputs.odoo-version }}-
+
+      - name: Clone repository dependencies
+        id: clone-deps
+        if: inputs.skip-dependencies != true
+        env:
+          GH_TOKEN: ${{ secrets.CONFIG_TOKEN || github.token }}
+          ODOO_VERSION: ${{ inputs.odoo-version }}
+        run: |
+          echo "::group::Repository Dependencies"
+
+          # Check for [odoo.dependencies] section
+          if ! grep -q '^\[odoo\.dependencies\]' pyproject.toml 2>/dev/null; then
+            echo "No [odoo.dependencies] section found"
+            echo "::endgroup::"
+            exit 0
+          fi
+
+          DEPS_DIR="${{ github.workspace }}/deps"
+          mkdir -p "$DEPS_DIR"
+          MAJOR_VERSION="${ODOO_VERSION%%.*}"
+
+          # Parse and clone each dependency
+          awk '/^\[odoo\.dependencies\]/{flag=1; next} /^\[/{flag=0} flag && /=/' pyproject.toml | \
+          while IFS='=' read -r repo strategy; do
+            # Clean up quotes and whitespace
+            repo=$(echo "$repo" | tr -d ' "')
+            strategy=$(echo "$strategy" | tr -d ' "{}' | sed 's/version[[:space:]]*=[[:space:]]*//')
+
+            # Skip empty lines and comments
+            [ -z "$repo" ] && continue
+            echo "$repo" | grep -q '^#' && continue
+
+            # Default to tag strategy
+            [ -z "$strategy" ] && strategy="tag"
+
+            REPO_NAME=$(basename "$repo")
+
+            # Skip if already cached/cloned
+            if [ -d "$DEPS_DIR/$REPO_NAME" ]; then
+              echo "✓ $REPO_NAME (cached)"
+              continue
+            fi
+
+            # Resolve version based on strategy
+            if [ "$strategy" = "tag" ]; then
+              VERSION=$(gh api "repos/${repo}/tags" --jq '.[].name' 2>/dev/null | \
+                        grep "^v${MAJOR_VERSION}\." | sort -V | tail -1)
+              if [ -z "$VERSION" ]; then
+                echo "::warning::No tag matching v${MAJOR_VERSION}.* found for $repo"
+                continue
+              fi
+            elif [ "$strategy" = "branch" ]; then
+              VERSION="${MAJOR_VERSION}.0"
+            else
+              VERSION="$strategy"
+            fi
+
+            echo "Cloning $repo @ $VERSION"
+            if git clone --depth 1 --branch "$VERSION" \
+              "https://x-access-token:${GH_TOKEN}@github.com/${repo}.git" \
+              "$DEPS_DIR/$REPO_NAME" 2>/dev/null; then
+              echo "✓ $REPO_NAME @ $VERSION"
+              rm -rf "$DEPS_DIR/$REPO_NAME/.git"
+            else
+              echo "::error::Failed to clone $repo @ $VERSION"
+            fi
+          done
+
+          echo ""
+          echo "Dependencies directory:"
+          ls -la "$DEPS_DIR" 2>/dev/null || echo "(empty)"
+          echo "::endgroup::"
 
       - name: Check for run-all-tests label
         id: check-label
@@ -169,13 +255,26 @@ jobs:
             TEST_TAG="$INPUT_TEST_TAGS"
           fi
           echo "Effective test tag: $TEST_TAG"
+          echo "test-tag=$TEST_TAG" >> $GITHUB_OUTPUT
 
-          # Find modules with tests containing the test tag
-          TEST_MODULES=$(find . -type f -path '*/tests/*.py' \
-                         -not -path './enterprise/*' \
-                         -not -path './odoo-docker-minimal/*' \
-                         -exec grep -l "$TEST_TAG" {} \; 2>/dev/null | \
-                         rev | cut -d '/' -f 3 | rev | sort -u | tr '\n' ',' | sed 's/,$//')
+          # Find modules with tests
+          if [ -n "$TEST_TAG" ]; then
+            # Find modules with tests containing the specific tag
+            TEST_MODULES=$(find . -type f -path '*/tests/*.py' \
+                           -not -path './enterprise/*' \
+                           -not -path './odoo-docker-minimal/*' \
+                           -not -path './deps/*' \
+                           -exec grep -l "$TEST_TAG" {} \; 2>/dev/null | \
+                           rev | cut -d '/' -f 3 | rev | sort -u | tr '\n' ',' | sed 's/,$//')
+          else
+            # No tag specified - find ALL modules with test files
+            TEST_MODULES=$(find . -type f -path '*/tests/*.py' -name 'test_*.py' \
+                           -not -path './enterprise/*' \
+                           -not -path './odoo-docker-minimal/*' \
+                           -not -path './deps/*' \
+                           2>/dev/null | \
+                           rev | cut -d '/' -f 3 | rev | sort -u | tr '\n' ',' | sed 's/,$//')
+          fi
           echo "test-modules=$TEST_MODULES" >> $GITHUB_OUTPUT
           TEST_COUNT=$(echo "$TEST_MODULES" | tr ',' '\n' | grep -c . || echo "0")
           echo "Modules with tests ($TEST_TAG): $TEST_COUNT"
@@ -356,7 +455,9 @@ jobs:
           sed -i "s|^OD_VERSION=.*|OD_VERSION=${OD_VER}|" .env
           sed -i 's|^OD_SHELL_SCRIPT=.*|OD_SHELL_SCRIPT=|' .env
           sed -i 's|^TEST_ENABLED=.*|TEST_ENABLED=true|' .env
-          sed -i 's|^TEST_TAGS=.*|TEST_TAGS=${{ inputs.test-tags }}|' .env
+          # Use effective test tag (from pyproject.toml or input, empty = all tests)
+          EFFECTIVE_TAG="${{ steps.discover.outputs.test-tag }}"
+          sed -i "s|^TEST_TAGS=.*|TEST_TAGS=${EFFECTIVE_TAG}|" .env
           sed -i 's|^BASE_MODULES=.*|BASE_MODULES=|' .env
           sed -i 's|^CUSTOM_MODULES=.*|CUSTOM_MODULES=${{ steps.final.outputs.modules }}|' .env
           sed -i 's|^VCPUS=.*|VCPUS=2|' .env
@@ -374,8 +475,15 @@ jobs:
 
           cd odoo-docker-minimal
 
-          # Set the addons mount path to the workspace
-          export OD_ADDONS_MOUNT_PATH="${{ github.workspace }}"
+          # Build addons path: main workspace + each dependency
+          ADDONS_PATH="${{ github.workspace }}"
+          if [ -d "${{ github.workspace }}/deps" ]; then
+            for dep in ${{ github.workspace }}/deps/*/; do
+              [ -d "$dep" ] && ADDONS_PATH="${ADDONS_PATH}:${dep%/}"
+            done
+          fi
+          export OD_ADDONS_MOUNT_PATH="$ADDONS_PATH"
+          echo "Addons path: $OD_ADDONS_MOUNT_PATH"
 
           # Pull images and start postgres
           docker compose pull
@@ -473,7 +581,7 @@ jobs:
           echo "## Unit Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Odoo Version**: ${{ inputs.odoo-version }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Test Tags**: ${{ inputs.test-tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Tags**: ${{ steps.discover.outputs.test-tag || 'all' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           TESTS_PASSED=true
@@ -563,7 +671,7 @@ jobs:
 
             body += `| | |\n|---|---|\n`;
             body += `| **Odoo** | v${{ inputs.odoo-version }} |\n`;
-            body += `| **Tags** | \`${{ inputs.test-tags }}\` |\n`;
+            body += `| **Tags** | \`${{ steps.discover.outputs.test-tag || 'all' }}\` |\n`;
 
             if (!skipped) {
               body += `| **Modules** | \`${modules}\` |\n`;

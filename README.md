@@ -91,6 +91,7 @@ Runs Odoo unit tests using `odoo-docker-minimal` with Docker Compose.
 - For PRs, only tests modules that were changed (dependencies auto-installed by Odoo)
 - For pushes, runs all tests
 - Git submodules always included
+- Repository dependencies cloned from GitHub (see [Repository Dependencies](#repository-dependencies))
 - Posts test results as PR comments
 - Respects `test_enabled` setting in `pyproject.toml`
 
@@ -101,6 +102,7 @@ Runs Odoo unit tests using `odoo-docker-minimal` with Docker Compose.
 | `test-tags` | No | much_unit | Test tags to run |
 | `strict-mode` | No | false | Fail on any test failure |
 | `timeout-minutes` | No | 30 | Test execution timeout |
+| `skip-dependencies` | No | false | Skip cloning repository dependencies |
 
 **Secrets** (required for enterprise testing):
 - `REGISTRY_URL` - Docker registry URL
@@ -141,6 +143,73 @@ github-actions/
 | 16 | 3.8, 3.10 | 8.0.0 |
 | 17 | 3.10, 3.11 | 9.3.7 |
 | 18 | 3.10, 3.11, 3.12 | 9.3.7 |
+
+## Repository Dependencies
+
+When your Odoo addon depends on modules from other repositories, configure them in `pyproject.toml`. The CI workflow will automatically clone these dependencies before running tests.
+
+### Configuration
+
+Add an `[odoo.dependencies]` section to your `pyproject.toml`:
+
+```toml
+[odoo.dependencies]
+# Format: "org/repo" = "version_strategy"
+#
+# Version strategies:
+#   "tag"    - Find latest tag matching v{odoo-major}.* (DEFAULT)
+#   "branch" - Clone the {odoo-major}.0 branch
+#   "X.Y.Z"  - Explicit branch/tag name
+#
+"much-GmbH/much-integration-hub" = "tag"
+"much-GmbH/much-notify" = "tag"
+```
+
+### Version Resolution
+
+| Strategy | Example | Resolves to (Odoo 17) |
+|----------|---------|----------------------|
+| `"tag"` | `"much-GmbH/much-notify" = "tag"` | Latest `v17.*` tag (e.g., `v17.0.1.0.0`) |
+| `"branch"` | `"much-GmbH/much-notify" = "branch"` | Branch `17.0` |
+| Explicit | `"much-GmbH/much-notify" = "v17.0.0.1.0"` | Exact tag/branch `v17.0.0.1.0` |
+
+### Important Notes
+
+- **Dependencies are explicit** - If your addon depends on `ihub`, and `ihub` depends on `much-notify`, you must list both:
+  ```toml
+  [odoo.dependencies]
+  "much-GmbH/much-integration-hub" = "tag"
+  "much-GmbH/much-notify" = "tag"  # Required by ihub
+  ```
+- **Caching** - Dependencies are cached based on `pyproject.toml` hash. Changes to the file invalidate the cache.
+- **Private repos** - Requires `CONFIG_TOKEN` secret with read access to the dependency repositories.
+- **Skip dependencies** - Use `skip-dependencies: true` input to disable dependency cloning.
+
+### Example: much-datev-integration
+
+```toml
+[odoo]
+version = 17.0
+edition = "enterprise"
+
+[odoo.testing]
+enabled = true
+test_tags = "much_unit"
+
+[odoo.dependencies]
+# ihub modules (ihub, ihub_log, ihub_job, ihub_queue)
+"much-GmbH/much-integration-hub" = "tag"
+# Required by ihub_queue
+"much-GmbH/much-notify" = "tag"
+```
+
+### Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `No tag matching v17.* found` | No version tags for this Odoo version | Use `"branch"` strategy or explicit version |
+| `Failed to clone` | Missing access or invalid ref | Check `CONFIG_TOKEN` permissions and ref exists |
+| Tests fail with missing module | Dependency not listed | Add missing transitive dependencies |
 
 ## Cost Optimization
 
