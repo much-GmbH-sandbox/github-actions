@@ -222,11 +222,26 @@ jobs:
           echo "Odoo Edition: $ODOO_EDITION"
 
           # Extract test_tags from [odoo.testing] (optional override)
+          # If [odoo.testing] section exists but test_tags is not set, run ALL tests
           TEST_TAGS=$(awk '/^\[odoo\.testing\]/{flag=1; next} /^\[/{flag=0} flag' pyproject.toml | \
                       grep -E "^test_tags\s*=" | head -1 | \
                       sed 's/.*=\s*//; s/[" ]//g')
-          echo "test-tags=${TEST_TAGS:-}" >> $GITHUB_OUTPUT
-          echo "Test Tags (from config): ${TEST_TAGS:-not set}"
+          if [ -n "$TEST_TAGS" ]; then
+            echo "test-tags=${TEST_TAGS}" >> $GITHUB_OUTPUT
+            echo "test-tags-set=true" >> $GITHUB_OUTPUT
+            echo "Test Tags (from config): $TEST_TAGS"
+          else
+            # Check if [odoo.testing] section exists - if so, empty means "run all"
+            if grep -q '^\[odoo\.testing\]' pyproject.toml; then
+              echo "test-tags=" >> $GITHUB_OUTPUT
+              echo "test-tags-set=true" >> $GITHUB_OUTPUT
+              echo "Test Tags: (none - will run all tests)"
+            else
+              echo "test-tags=" >> $GITHUB_OUTPUT
+              echo "test-tags-set=false" >> $GITHUB_OUTPUT
+              echo "Test Tags: (not configured - using input default)"
+            fi
+          fi
 
           echo "::endgroup::"
 
@@ -246,12 +261,16 @@ jobs:
         run: |
           echo "::group::Discovering modules"
 
-          # Use test tag from config if set, otherwise use input
+          # Use test tag from config if explicitly set, otherwise use input default
           CONFIG_TEST_TAGS="${{ steps.config.outputs.test-tags }}"
+          CONFIG_TEST_TAGS_SET="${{ steps.config.outputs.test-tags-set }}"
           INPUT_TEST_TAGS="${{ inputs.test-tags }}"
-          if [ -n "$CONFIG_TEST_TAGS" ]; then
+
+          if [ "$CONFIG_TEST_TAGS_SET" == "true" ]; then
+            # Config explicitly set (even if empty = run all tests)
             TEST_TAG="$CONFIG_TEST_TAGS"
           else
+            # No [odoo.testing] section - use input default
             TEST_TAG="$INPUT_TEST_TAGS"
           fi
           echo "Effective test tag: $TEST_TAG"
