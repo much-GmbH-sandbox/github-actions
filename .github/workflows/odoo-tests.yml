@@ -345,8 +345,8 @@ jobs:
                   dir=$(dirname "$dir")
                 done
               done
-              # Deduplicate and clean up
-              CHANGED_MODULES=$(echo "$CHANGED_MODULES" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+              # Deduplicate and clean up (remove empty lines, leading/trailing commas)
+              CHANGED_MODULES=$(echo "$CHANGED_MODULES" | tr ',' '\n' | grep -v '^$' | sort -u | tr '\n' ',' | sed 's/^,//;s/,$//')
               echo "Changed modules: $CHANGED_MODULES"
 
               if [ -z "$CHANGED_MODULES" ]; then
