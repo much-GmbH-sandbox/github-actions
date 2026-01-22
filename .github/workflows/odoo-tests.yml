@@ -629,12 +629,15 @@ jobs:
           RESULTS_JSON="["
 
           for module in $(echo "$MODULES" | tr ',' ' '); do
-            # Count failures and errors for this module
-            MOD_FAILED=$(grep -c "FAIL:.*odoo\.addons\.${module}\." /tmp/odoo-test-logs.txt 2>/dev/null || echo "0")
-            MOD_ERRORS=$(grep -c "ERROR:.*odoo\.addons\.${module}\." /tmp/odoo-test-logs.txt 2>/dev/null || echo "0")
+            # Count failures and errors for this module (strip newlines from grep -c output)
+            MOD_FAILED=$(grep -c "FAIL:.*odoo\.addons\.${module}\." /tmp/odoo-test-logs.txt 2>/dev/null | tr -d '\n' || echo -n "0")
+            MOD_ERRORS=$(grep -c "ERROR:.*odoo\.addons\.${module}\." /tmp/odoo-test-logs.txt 2>/dev/null | tr -d '\n' || echo -n "0")
+            # Ensure we have valid numbers
+            [ -z "$MOD_FAILED" ] && MOD_FAILED=0
+            [ -z "$MOD_ERRORS" ] && MOD_ERRORS=0
 
             # Extract failed test names for this module
-            FAILED_TESTS=$(grep -oE "FAIL: [^ ]+ \(odoo\.addons\.${module}\.[^)]+\)" /tmp/odoo-test-logs.txt 2>/dev/null | sed 's/FAIL: \([^ ]*\).*/\1/' | tr '\n' ',' | sed 's/,$//' || echo "")
+            FAILED_TESTS=$(grep -oE "FAIL: [^ ]+ \(odoo\.addons\.${module}\.[^)]+\)" /tmp/odoo-test-logs.txt 2>/dev/null | sed 's/FAIL: \([^ ]*\).*/\1/' | tr '\n' ',' | sed 's/,$//' || true)
 
             RESULTS_JSON="${RESULTS_JSON}{\"module\":\"${module}\",\"failed\":${MOD_FAILED},\"errors\":${MOD_ERRORS},\"failed_tests\":\"${FAILED_TESTS}\"},"
           done
