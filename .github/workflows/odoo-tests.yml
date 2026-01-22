@@ -483,9 +483,12 @@ jobs:
             # Empty tag = run all tests, but ONLY for the modules being tested (not dependencies)
             # Convert "mod1,mod2,mod3" to "/mod1,/mod2,/mod3" (comma-separated per Odoo docs)
             MODULES="${{ steps.final.outputs.modules }}"
+            # Clean modules: remove any spaces, newlines, and normalize commas
+            MODULES=$(echo "$MODULES" | tr -d ' \n\r' | tr -s ',')
             EFFECTIVE_TAG=$(echo "$MODULES" | sed 's/,/,\//g' | sed 's/^/\//')
-            echo "Using module-scoped tags: $EFFECTIVE_TAG"
+            echo "Module-scoped test tags: $EFFECTIVE_TAG"
           fi
+          echo "Final TEST_TAGS value: $EFFECTIVE_TAG"
           sed -i "s|^TEST_TAGS=.*|TEST_TAGS=${EFFECTIVE_TAG}|" .env
           sed -i 's|^BASE_MODULES=.*|BASE_MODULES=|' .env
           sed -i 's|^CUSTOM_MODULES=.*|CUSTOM_MODULES=${{ steps.final.outputs.modules }}|' .env
@@ -595,29 +598,50 @@ jobs:
         id: results
         if: always() && steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true'
         run: |
-          if [ -f /tmp/odoo-test-logs.txt ]; then
-            # Parse: "0 failed, 0 error(s) of 51 tests"
-            RESULT_LINE=$(grep -E "failed.*error.*tests" /tmp/odoo-test-logs.txt | tail -1 || true)
-            if [ -n "$RESULT_LINE" ]; then
-              FAILED=$(echo "$RESULT_LINE" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo "0")
-              ERRORS=$(echo "$RESULT_LINE" | grep -oE '[0-9]+ error' | grep -oE '[0-9]+' || echo "0")
-              TOTAL=$(echo "$RESULT_LINE" | grep -oE 'of [0-9]+ tests' | grep -oE '[0-9]+' || echo "0")
-              PASSED=$((TOTAL - FAILED - ERRORS))
-
-              echo "failed=$FAILED" >> $GITHUB_OUTPUT
-              echo "errors=$ERRORS" >> $GITHUB_OUTPUT
-              echo "total=$TOTAL" >> $GITHUB_OUTPUT
-              echo "passed=$PASSED" >> $GITHUB_OUTPUT
-              echo "found=true" >> $GITHUB_OUTPUT
-
-              echo "Test Results: $PASSED passed, $FAILED failed, $ERRORS errors (total: $TOTAL)"
-            else
-              echo "found=false" >> $GITHUB_OUTPUT
-              echo "Could not parse test results from logs"
-            fi
-          else
+          if [ ! -f /tmp/odoo-test-logs.txt ]; then
             echo "found=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
+
+          # Parse overall results: "X failed, Y error(s) of Z tests"
+          RESULT_LINE=$(grep -E "failed.*error.*tests" /tmp/odoo-test-logs.txt | tail -1 || true)
+          if [ -z "$RESULT_LINE" ]; then
+            echo "found=false" >> $GITHUB_OUTPUT
+            echo "Could not parse test results from logs"
+            exit 0
+          fi
+
+          TOTAL_FAILED=$(echo "$RESULT_LINE" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo "0")
+          TOTAL_ERRORS=$(echo "$RESULT_LINE" | grep -oE '[0-9]+ error' | grep -oE '[0-9]+' || echo "0")
+          TOTAL=$(echo "$RESULT_LINE" | grep -oE 'of [0-9]+ tests' | grep -oE '[0-9]+' || echo "0")
+          TOTAL_PASSED=$((TOTAL - TOTAL_FAILED - TOTAL_ERRORS))
+
+          echo "failed=$TOTAL_FAILED" >> $GITHUB_OUTPUT
+          echo "errors=$TOTAL_ERRORS" >> $GITHUB_OUTPUT
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "passed=$TOTAL_PASSED" >> $GITHUB_OUTPUT
+          echo "found=true" >> $GITHUB_OUTPUT
+
+          echo "Test Results: $TOTAL_PASSED passed, $TOTAL_FAILED failed, $TOTAL_ERRORS errors (total: $TOTAL)"
+
+          # Build per-module results JSON
+          MODULES="${{ steps.final.outputs.modules }}"
+          RESULTS_JSON="["
+
+          for module in $(echo "$MODULES" | tr ',' ' '); do
+            # Count failures and errors for this module
+            MOD_FAILED=$(grep -c "FAIL:.*odoo\.addons\.${module}\." /tmp/odoo-test-logs.txt 2>/dev/null || echo "0")
+            MOD_ERRORS=$(grep -c "ERROR:.*odoo\.addons\.${module}\." /tmp/odoo-test-logs.txt 2>/dev/null || echo "0")
+
+            # Extract failed test names for this module
+            FAILED_TESTS=$(grep -oE "FAIL: [^ ]+ \(odoo\.addons\.${module}\.[^)]+\)" /tmp/odoo-test-logs.txt 2>/dev/null | sed 's/FAIL: \([^ ]*\).*/\1/' | tr '\n' ',' | sed 's/,$//' || echo "")
+
+            RESULTS_JSON="${RESULTS_JSON}{\"module\":\"${module}\",\"failed\":${MOD_FAILED},\"errors\":${MOD_ERRORS},\"failed_tests\":\"${FAILED_TESTS}\"},"
+          done
+
+          RESULTS_JSON="${RESULTS_JSON%,}]"
+          echo "per_module=${RESULTS_JSON}" >> $GITHUB_OUTPUT
+          echo "Per-module results: $RESULTS_JSON"
 
       - name: Generate Summary
         id: summary
@@ -666,13 +690,11 @@ jobs:
         uses: actions/github-script@v7
         env:
           TEST_ERRORS: ${{ steps.errors.outputs.errors }}
+          PER_MODULE: ${{ steps.results.outputs.per_module }}
         with:
           script: |
             const skipped = '${{ steps.check.outputs.skip }}' === 'true' || '${{ steps.final.outputs.skip }}' === 'true';
             const testsPassed = '${{ steps.tests.outputs.result }}' === 'pass';
-            const modules = '${{ steps.final.outputs.modules }}';
-            const duration = '${{ steps.tests.outputs.duration }}';
-            const testMode = '${{ steps.discover.outputs.test_mode }}';
             const errors = process.env.TEST_ERRORS || '';
 
             // Test results from parsed logs
@@ -682,57 +704,88 @@ jobs:
             const failedTests = parseInt('${{ steps.results.outputs.failed }}') || 0;
             const errorTests = parseInt('${{ steps.results.outputs.errors }}') || 0;
 
-            let status, statusEmoji;
+            // Parse per-module results
+            let perModule = [];
+            try {
+              const perModuleRaw = process.env.PER_MODULE || '[]';
+              perModule = JSON.parse(perModuleRaw);
+            } catch (e) {
+              console.log('Failed to parse per_module:', e);
+            }
+
+            let status;
             if (skipped) {
               if ('${{ steps.check.outputs.skip }}' === 'true') {
                 status = 'Skipped (fast_tests = false)';
               } else {
                 status = 'Skipped (no modules to test)';
               }
-              statusEmoji = '⏭️';
+            }
+
+            let body = `## 🧪 Test Results\n\n`;
+
+            // Header based on status
+            if (skipped) {
+              body += `### ⏭️ ${status}\n\n`;
             } else if (testsPassed) {
-              status = 'Passed';
-              statusEmoji = '✅';
+              body += `### ✅ All tests passed (${totalTests} total)\n\n`;
             } else {
-              status = 'Failed';
-              statusEmoji = '❌';
+              const failCount = failedTests + errorTests;
+              body += `### ❌ ${failCount} test${failCount !== 1 ? 's' : ''} failed\n\n`;
             }
 
-            let body = `## 🧪 Unit Test Results\n\n`;
+            // Per-module table
+            if (!skipped && perModule.length > 0) {
+              const hasFailures = !testsPassed;
 
-            if (!skipped && resultsFound) {
-              // Beautiful test summary
-              const passEmoji = passedTests > 0 ? '✅' : '⚪';
-              const failEmoji = failedTests > 0 ? '❌' : '⚪';
-              const errorEmoji = errorTests > 0 ? '💥' : '⚪';
+              if (hasFailures) {
+                body += `| Module | Passed | Failed | Status |\n`;
+                body += `|--------|--------|--------|--------|\n`;
+              } else {
+                body += `| Module | Tests | Status |\n`;
+                body += `|--------|-------|--------|\n`;
+              }
 
-              body += `### ${statusEmoji} ${status}\n\n`;
-              body += `| ${passEmoji} Passed | ${failEmoji} Failed | ${errorEmoji} Errors | Total |\n`;
-              body += `|:---:|:---:|:---:|:---:|\n`;
-              body += `| **${passedTests}** | **${failedTests}** | **${errorTests}** | ${totalTests} |\n\n`;
-            } else {
-              body += `### ${statusEmoji} ${status}\n\n`;
+              for (const mod of perModule) {
+                const modFailed = (mod.failed || 0) + (mod.errors || 0);
+                const modStatus = modFailed > 0 ? '❌' : '✅';
+
+                if (hasFailures) {
+                  const modPassed = modFailed > 0 ? '?' : '✓';
+                  body += `| \`${mod.module}\` | ${modPassed} | ${modFailed} | ${modStatus} |\n`;
+                } else {
+                  body += `| \`${mod.module}\` | ✓ | ${modStatus} |\n`;
+                }
+              }
+              body += `\n`;
             }
 
-            body += `| | |\n|---|---|\n`;
-            body += `| **Odoo** | v${{ inputs.odoo-version }} |\n`;
-            body += `| **Tags** | \`${{ steps.discover.outputs.test-tag || 'all' }}\` |\n`;
-
-            if (!skipped) {
-              body += `| **Modules** | \`${modules}\` |\n`;
-              body += `| **Test Mode** | \`${testMode}\` |\n`;
-              body += `| **Duration** | ${duration}s |\n`;
+            // Failed test details
+            if (!skipped && !testsPassed && perModule.length > 0) {
+              const modulesWithFailures = perModule.filter(m => m.failed_tests);
+              if (modulesWithFailures.length > 0) {
+                body += `<details>\n<summary>❌ <b>Failed Tests</b></summary>\n\n`;
+                for (const mod of modulesWithFailures) {
+                  if (mod.failed_tests) {
+                    body += `**${mod.module}**:\n`;
+                    for (const test of mod.failed_tests.split(',')) {
+                      if (test) body += `- \`${test}\`\n`;
+                    }
+                    body += `\n`;
+                  }
+                }
+                body += `</details>\n\n`;
+              }
             }
 
-            body += `\n`;
-
-            if (!skipped && !testsPassed && errors) {
+            // Show raw errors if available and no per-module parsing
+            if (!skipped && !testsPassed && errors && perModule.filter(m => m.failed_tests).length === 0) {
               body += `<details>\n<summary>❌ <b>Test Errors</b></summary>\n\n`;
               body += `\`\`\`\n${errors.trim()}\n\`\`\`\n`;
               body += `</details>\n\n`;
             }
 
-            body += `\n---\n📋 [View full logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`;
+            body += `📋 [View full logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`;
 
             // Find existing comment to update
             const { data: comments } = await github.rest.issues.listComments({
