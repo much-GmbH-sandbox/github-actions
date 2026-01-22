@@ -476,13 +476,17 @@ jobs:
           sed -i 's|^TEST_ENABLED=.*|TEST_ENABLED=true|' .env
 
           # Determine effective test tags
-          # If test-tag is empty, leave it empty to use --test-enable (runs all tests for installed modules)
-          # Note: /module,/module2 syntax doesn't work with current Docker image due to IFS bug
+          # If test-tag is empty (user wants all tests), use /module syntax to limit to tested modules only
+          # Requires Docker image fix: https://github.com/much-GmbH/odoo-docker-builds/pull/69
           EFFECTIVE_TAG="${{ steps.discover.outputs.test-tag }}"
           if [ -z "$EFFECTIVE_TAG" ]; then
-            # Empty tag = use --test-enable which runs tests for all CUSTOM_MODULES
-            # This works because we control which modules are installed
-            echo "Using --test-enable mode (empty TEST_TAGS)"
+            # Empty tag = run all tests, but ONLY for the modules being tested (not dependencies)
+            # Convert "mod1,mod2,mod3" to "/mod1,/mod2,/mod3" (comma-separated per Odoo docs)
+            MODULES="${{ steps.final.outputs.modules }}"
+            # Clean modules: remove any spaces, newlines, and normalize commas
+            MODULES=$(echo "$MODULES" | tr -d ' \n\r' | tr -s ',')
+            EFFECTIVE_TAG=$(echo "$MODULES" | sed 's/,/,\//g' | sed 's/^/\//')
+            echo "Module-scoped test tags: $EFFECTIVE_TAG"
           else
             echo "Using test tag: $EFFECTIVE_TAG"
           fi
