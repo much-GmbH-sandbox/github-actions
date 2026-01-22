@@ -531,6 +531,58 @@ jobs:
             echo "::endgroup::"
           fi
 
+      - name: Collect Python dependencies
+        if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true'
+        run: |
+          # Collect Python requirements from dependency repos
+          # The Docker entrypoint installs ${OD_ADDONS_PATH}/custom/addons/requirements.txt
+          # which maps to the workspace root
+          echo "::group::Collecting Python dependencies"
+
+          # Start with existing requirements.txt if present
+          COMBINED_REQS="${{ github.workspace }}/requirements.txt"
+          if [ -f "$COMBINED_REQS" ]; then
+            echo "Existing requirements.txt found"
+            cp "$COMBINED_REQS" "$COMBINED_REQS.orig"
+          fi
+
+          # Collect from dependency repos
+          if [ -d "${{ github.workspace }}/deps" ]; then
+            for dep_repo in ${{ github.workspace }}/deps/*/; do
+              [ -d "$dep_repo" ] || continue
+              repo_name=$(basename "$dep_repo")
+
+              # Check for repo-level requirements.txt
+              if [ -f "$dep_repo/requirements.txt" ]; then
+                echo "Found: $repo_name/requirements.txt"
+                cat "$dep_repo/requirements.txt" >> "$COMBINED_REQS"
+                echo "" >> "$COMBINED_REQS"
+              fi
+
+              # Check for module-level requirements.txt
+              find "$dep_repo" -maxdepth 2 -name "requirements.txt" -type f | while read req_file; do
+                if [ "$req_file" != "$dep_repo/requirements.txt" ]; then
+                  rel_path="${req_file#$dep_repo/}"
+                  echo "Found: $repo_name/$rel_path"
+                  cat "$req_file" >> "$COMBINED_REQS"
+                  echo "" >> "$COMBINED_REQS"
+                fi
+              done
+            done
+          fi
+
+          # Remove duplicates and empty lines
+          if [ -f "$COMBINED_REQS" ]; then
+            sort -u "$COMBINED_REQS" | grep -v '^$' | grep -v '^#' > "$COMBINED_REQS.tmp" || true
+            mv "$COMBINED_REQS.tmp" "$COMBINED_REQS"
+            echo "Combined requirements.txt:"
+            cat "$COMBINED_REQS"
+          else
+            echo "No requirements.txt files found"
+          fi
+
+          echo "::endgroup::"
+
       - name: Run tests
         id: tests
         if: steps.check.outputs.skip != 'true' && steps.final.outputs.skip != 'true'
