@@ -489,7 +489,8 @@ jobs:
             echo "Module-scoped test tags: $EFFECTIVE_TAG"
           fi
           echo "Final TEST_TAGS value: $EFFECTIVE_TAG"
-          sed -i "s|^TEST_TAGS=.*|TEST_TAGS=${EFFECTIVE_TAG}|" .env
+          # Quote the value to preserve commas in docker-compose
+          sed -i "s|^TEST_TAGS=.*|TEST_TAGS=\"${EFFECTIVE_TAG}\"|" .env
           sed -i 's|^BASE_MODULES=.*|BASE_MODULES=|' .env
           sed -i 's|^CUSTOM_MODULES=.*|CUSTOM_MODULES=${{ steps.final.outputs.modules }}|' .env
           sed -i 's|^VCPUS=.*|VCPUS=2|' .env
