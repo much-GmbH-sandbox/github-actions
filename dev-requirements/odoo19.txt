@@ -1,4 +1,5 @@
 # Odoo 19 specific requirements
 # pylint-odoo version compatible with Odoo 19
+# v10.0.0 includes Odoo 19 manifest version support
 
-pylint-odoo==9.3.7
+pylint-odoo==10.0.0
