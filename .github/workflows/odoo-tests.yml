@@ -331,10 +331,23 @@ jobs:
               TEST_MODE="no-changes-fallback"
             else
               # Extract module names from changed file paths
-              CHANGED_MODULES=$(echo "$CHANGED_FILES" | \
-                grep -E '\.(py|xml|csv|js|scss)$' | \
-                cut -d'/' -f1 | \
-                sort -u | tr '\n' ',' | sed 's/,$//')
+              # A module is defined as a directory containing __manifest__.py
+              CHANGED_MODULES=""
+              for file in $(echo "$CHANGED_FILES" | grep -E '\.(py|xml|csv|js|scss)$'); do
+                dir=$(dirname "$file")
+                # Walk up directory tree to find __manifest__.py
+                while [ "$dir" != "." ] && [ "$dir" != "/" ] && [ -n "$dir" ]; do
+                  if [ -f "$dir/__manifest__.py" ]; then
+                    mod=$(basename "$dir")
+                    CHANGED_MODULES="${CHANGED_MODULES}${mod},"
+                    break
+                  fi
+                  dir=$(dirname "$dir")
+                done
+              done
+              # Deduplicate and clean up
+              CHANGED_MODULES=$(echo "$CHANGED_MODULES" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+              echo "Changed modules: $CHANGED_MODULES"
 
               if [ -z "$CHANGED_MODULES" ]; then
                 echo "No module changes detected - running ALL tests as fallback"
