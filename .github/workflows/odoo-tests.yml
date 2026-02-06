@@ -91,6 +91,7 @@ jobs:
         with:
           ref: ${{ github.head_ref || github.ref }}
           fetch-depth: 0
+          token: ${{ secrets.CONFIG_TOKEN || github.token }}
           submodules: recursive
 
       - name: Cache repository dependencies
@@ -243,6 +244,13 @@ jobs:
             fi
           fi
 
+          # Extract exclude_paths from [odoo.testing] (comma-separated paths to skip)
+          EXCLUDE_PATHS=$(awk '/^\[odoo\.testing\]/{flag=1; next} /^\[/{flag=0} flag' pyproject.toml | \
+                          grep -E "^exclude_paths\s*=" | head -1 | \
+                          sed 's/.*=\s*//; s/[" ]//g')
+          echo "exclude-paths=$EXCLUDE_PATHS" >> $GITHUB_OUTPUT
+          echo "Exclude Paths: ${EXCLUDE_PATHS:-none}"
+
           echo "::endgroup::"
 
       - name: Check if tests are enabled
@@ -276,23 +284,33 @@ jobs:
           echo "Effective test tag: $TEST_TAG"
           echo "test-tag=$TEST_TAG" >> $GITHUB_OUTPUT
 
+          # Build exclusion arguments: always exclude enterprise, docker-minimal, deps, ext
+          EXCLUDE_ARGS="-not -path './enterprise/*' -not -path './odoo-docker-minimal/*' -not -path './deps/*' -not -path './ext/*'"
+
+          # Exclude submodules dynamically
+          for sub in $(git submodule status 2>/dev/null | awk '{print $2}'); do
+            EXCLUDE_ARGS="$EXCLUDE_ARGS -not -path './$sub/*'"
+          done
+
+          # Exclude paths from [odoo.testing] exclude_paths
+          EXTRA_EXCLUDES="${{ steps.config.outputs.exclude-paths }}"
+          if [ -n "$EXTRA_EXCLUDES" ]; then
+            for path in $(echo "$EXTRA_EXCLUDES" | tr ',' ' '); do
+              EXCLUDE_ARGS="$EXCLUDE_ARGS -not -path './$path/*'"
+            done
+          fi
+
+          echo "Exclusions: $EXCLUDE_ARGS"
+
           # Find modules with tests
           if [ -n "$TEST_TAG" ]; then
             # Find modules with tests containing the specific tag
-            TEST_MODULES=$(find . -type f -path '*/tests/*.py' \
-                           -not -path './enterprise/*' \
-                           -not -path './odoo-docker-minimal/*' \
-                           -not -path './deps/*' \
-                           -exec grep -l "$TEST_TAG" {} \; 2>/dev/null | \
-                           rev | cut -d '/' -f 3 | rev | sort -u | tr '\n' ',' | sed 's/,$//')
+            TEST_MODULES=$(eval "find . -type f -path '*/tests/*.py' $EXCLUDE_ARGS -exec grep -l '$TEST_TAG' {} \; 2>/dev/null" | \
+                           sed 's|/tests/.*||' | xargs -I{} basename {} | sort -u | tr '\n' ',' | sed 's/,$//')
           else
             # No tag specified - find ALL modules with test files
-            TEST_MODULES=$(find . -type f -path '*/tests/*.py' -name 'test_*.py' \
-                           -not -path './enterprise/*' \
-                           -not -path './odoo-docker-minimal/*' \
-                           -not -path './deps/*' \
-                           2>/dev/null | \
-                           rev | cut -d '/' -f 3 | rev | sort -u | tr '\n' ',' | sed 's/,$//')
+            TEST_MODULES=$(eval "find . -type f -path '*/tests/*.py' -name 'test_*.py' $EXCLUDE_ARGS 2>/dev/null" | \
+                           sed 's|/tests/.*||' | xargs -I{} basename {} | sort -u | tr '\n' ',' | sed 's/,$//')
           fi
           echo "test-modules=$TEST_MODULES" >> $GITHUB_OUTPUT
           TEST_COUNT=$(echo "$TEST_MODULES" | tr ',' '\n' | grep -c . || echo "0")
@@ -616,16 +634,12 @@ jobs:
           echo "Waiting for PostgreSQL..."
           sleep 10
 
-          # Run tests
+          # Run tests - use tee to show logs in real-time AND capture them
           START_TIME=$(date +%s)
-          TEST_EXIT_CODE=0
-          docker compose up odoo --exit-code-from odoo || TEST_EXIT_CODE=$?
+          docker compose up odoo --exit-code-from odoo 2>&1 | tee /tmp/odoo-test-logs.txt; TEST_EXIT_CODE=${PIPESTATUS[0]}
           END_TIME=$(date +%s)
           DURATION=$((END_TIME - START_TIME))
           echo "duration=$DURATION" >> $GITHUB_OUTPUT
-
-          # Capture logs before checking result
-          docker compose logs odoo > /tmp/odoo-test-logs.txt 2>&1 || true
 
           echo "::endgroup::"
 
@@ -806,10 +820,16 @@ jobs:
             if (skipped) {
               body += `### ⏭️ ${status}\n\n`;
             } else if (testsPassed) {
-              body += `### ✅ All tests passed (${totalTests} total)\n\n`;
+              body += `### ✅ All tests passed\n\n`;
             } else {
-              const failCount = failedTests + errorTests;
-              body += `### ❌ ${failCount} test${failCount !== 1 ? 's' : ''} failed\n\n`;
+              body += `### ❌ Tests failed\n\n`;
+            }
+
+            // Results summary table (always show when not skipped)
+            if (!skipped && resultsFound) {
+              body += `| Passed | Failed | Errors | Total |\n`;
+              body += `|:------:|:------:|:------:|:-----:|\n`;
+              body += `| ${passedTests} | ${failedTests} | ${errorTests} | ${totalTests} |\n\n`;
             }
 
             // Per-module table
